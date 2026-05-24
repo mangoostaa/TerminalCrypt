@@ -67,6 +67,7 @@ Professional terminal dashboard using Rich:
 - Sparkline mini charts
 - Keyboard view switcher
 - Coinbase Top 5 quantitative ranking
+- Telegram surge alerts
 
 ---
 
@@ -170,6 +171,35 @@ On Linux/macOS:
 export COINGECKO_API_KEY=your_key_here
 python3 cryptex_terminal.py
 ```
+
+## Telegram surge alerts
+
+Set a Telegram bot token and chat id to receive alerts when a symbol is rising fast:
+
+```bash
+set TELEGRAM_BOT_TOKEN=123456:bot_token_here
+set TELEGRAM_CHAT_ID=123456789
+python3 cryptex_terminal.py --source coinbase
+```
+
+On Linux/macOS:
+
+```bash
+export TELEGRAM_BOT_TOKEN=123456:bot_token_here
+export TELEGRAM_CHAT_ID=123456789
+python3 cryptex_terminal.py --source coinbase
+```
+
+Optional tuning:
+
+```bash
+set SURGE_ALERT_PCT=3
+set SURGE_ALERT_WINDOW=12
+set SURGE_ALERT_24H_PCT=8
+set SURGE_ALERT_COOLDOWN=900
+```
+
+Defaults send one alert per symbol every 15 minutes when price rises at least 3% over the last 12 ticks, or when 24h momentum is at least 8% with short-term confirmation.
 
 ---
 

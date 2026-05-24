@@ -148,6 +148,10 @@ HELP_TEXT = """
   [bright_green]python3 cryptex_terminal.py --once[/]                  Snapshot y salir
   [bright_green]python3 cryptex_terminal.py --alert BTC 100000[/]      Alerta BTC ≥ $100,000
 
+[bold]ALERTAS TELEGRAM:[/bold]
+  Configura TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID para recibir alertas
+  de subidas fuertes. Umbral default: +3% en 12 ticks.
+
 [bold]COBERTURA (~80 pares Binance, ~50 Coinbase, ~35 Kraken):[/bold]
   Mega Cap    BTC ETH BNB SOL XRP ADA DOGE AVAX DOT LINK LTC UNI
   L1/L2       TRX TON NEAR APT OP ARB SUI SEI TIA STX HBAR ALGO

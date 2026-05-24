@@ -10,6 +10,7 @@ from rich.live import Live
 
 from .config import HELP_TEXT
 from .dashboard import build_dashboard
+from .notifications import start_surge_notifications
 from .rest import start_rest
 from .state import MarketState
 from .streams import BinanceStream, CoinbaseStream, KrakenStream
@@ -19,6 +20,7 @@ class CryptexApp:
     def __init__(self):
         self.state = MarketState()
         self._stream = None
+        self._notifier = None
         self.console = Console()
         self.view = "markets"
 
@@ -67,11 +69,16 @@ class CryptexApp:
         )
         self.start_streams(source)
         start_rest(self.state)
+        self._notifier = start_surge_notifications(self.state)
+        if self._notifier.enabled:
+            self.console.print("[dim green]Alertas Telegram de subidas fuertes activas.[/]", highlight=False)
 
         def shutdown(sig, frame):
             self.console.print("\n[dim green]Cerrando streams...[/]")
             if self._stream:
                 self._stream.stop()
+            if self._notifier:
+                self._notifier.stop()
             sys.exit(0)
 
         signal.signal(signal.SIGINT, shutdown)
@@ -91,5 +98,6 @@ class CryptexApp:
         self.console.print("[bold bright_green]◈ AZ TERMINAL — SNAPSHOT[/]")
         self.start_streams(source)
         start_rest(self.state)
+        self._notifier = start_surge_notifications(self.state)
         time.sleep(4)
         self.console.print(build_dashboard(self.state.snapshot(), self.view))
