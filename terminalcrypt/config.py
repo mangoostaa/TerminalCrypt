@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 BINANCE_SYMBOLS = {
     "BTCUSDT":   "BTC",   "ETHUSDT":   "ETH",   "BNBUSDT":   "BNB",
     "SOLUSDT":   "SOL",   "XRPUSDT":   "XRP",   "ADAUSDT":   "ADA",
@@ -131,7 +133,7 @@ COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com"
 KRAKEN_WS_URL = "wss://ws.kraken.com"
 
 HEADERS = {"User-Agent": "CryptexTerminal/3.1", "Accept": "application/json"}
-COINGECKO_API_KEY = "CG-HPLwJp5CEjk9w6NMHgyqWhzk"
+COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "")
 COINGECKO_HEADERS = dict(HEADERS)
 if COINGECKO_API_KEY:
     COINGECKO_HEADERS["X-CG-Pro-API-Key"] = COINGECKO_API_KEY
@@ -161,6 +163,8 @@ HELP_TEXT = """
 [bold]NAVEGACIÓN DEL DASHBOARD:[/bold]
   Ticker strip  → rota automáticamente cada 4s (18 símbolos visibles)
   Tabla precios → rota por categoría cada 8s (8 categorías)
+  [bright_green]TAB / I[/]       alterna Markets ↔ Top 5 cuantitativo Coinbase
+  [bright_green]M[/]             vuelve a Markets
 
 [bold]INDICADORES TÉCNICOS:[/bold]
   [bright_green]RSI(14)[/]         < 30 sobreventa  /  > 70 sobrecompra

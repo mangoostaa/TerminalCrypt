@@ -65,6 +65,8 @@ Professional terminal dashboard using Rich:
 - WebSocket diagnostics
 - Spread & relative volume
 - Sparkline mini charts
+- Keyboard view switcher
+- Coinbase Top 5 quantitative ranking
 
 ---
 
@@ -133,6 +135,8 @@ python -m terminalcrypt
 python3 cryptex_terminal.py --source coinbase
 ```
 
+Press `TAB` or `I` in the live dashboard to switch between the rotating markets table and the Coinbase quantitative Top 5 view. Press `M` to return to markets.
+
 ## Use Kraken feed
 
 ```bash
@@ -149,6 +153,22 @@ python3 cryptex_terminal.py --once
 
 ```bash
 python3 cryptex_terminal.py --alert BTC 100000
+```
+
+## Optional CoinGecko API key
+
+CoinGecko requests use `COINGECKO_API_KEY` when the environment variable is set:
+
+```bash
+set COINGECKO_API_KEY=your_key_here
+python3 cryptex_terminal.py
+```
+
+On Linux/macOS:
+
+```bash
+export COINGECKO_API_KEY=your_key_here
+python3 cryptex_terminal.py
 ```
 
 ---

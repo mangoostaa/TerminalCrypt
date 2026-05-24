@@ -3,6 +3,7 @@ from __future__ import annotations
 import signal
 import sys
 import time
+from typing import Optional
 
 from rich.console import Console
 from rich.live import Live
@@ -19,6 +20,34 @@ class CryptexApp:
         self.state = MarketState()
         self._stream = None
         self.console = Console()
+        self.view = "markets"
+
+    def _read_key(self) -> Optional[str]:
+        if sys.platform.startswith("win"):
+            try:
+                import msvcrt
+
+                if msvcrt.kbhit():
+                    return msvcrt.getwch()
+            except Exception:
+                return None
+        else:
+            try:
+                import select
+
+                if select.select([sys.stdin], [], [], 0)[0]:
+                    return sys.stdin.read(1)
+            except Exception:
+                return None
+        return None
+
+    def _handle_key(self, key: Optional[str]) -> None:
+        if not key:
+            return
+        if key in ("\t", "i", "I"):
+            self.view = "top5" if self.view == "markets" else "markets"
+        elif key in ("m", "M"):
+            self.view = "markets"
 
     def start_streams(self, source: str):
         if source == "coinbase":
@@ -50,10 +79,11 @@ class CryptexApp:
 
         time.sleep(1.5)
         try:
-            with Live(build_dashboard(self.state.snapshot()), refresh_per_second=2, screen=True) as live:
+            with Live(build_dashboard(self.state.snapshot(), self.view), refresh_per_second=2, screen=True) as live:
                 while True:
                     time.sleep(0.5)
-                    live.update(build_dashboard(self.state.snapshot()))
+                    self._handle_key(self._read_key())
+                    live.update(build_dashboard(self.state.snapshot(), self.view))
         except Exception as e:
             self.console.print(f"[red]Error: {e}[/]")
 
@@ -62,4 +92,4 @@ class CryptexApp:
         self.start_streams(source)
         start_rest(self.state)
         time.sleep(4)
-        self.console.print(build_dashboard(self.state.snapshot()))
+        self.console.print(build_dashboard(self.state.snapshot(), self.view))

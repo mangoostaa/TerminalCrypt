@@ -9,7 +9,7 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
-from .config import SYMBOL_CATEGORIES, SYMBOL_NAME, SYMBOLS_ORDERED
+from .config import COINBASE_SYMBOLS, SYMBOL_CATEGORIES, SYMBOL_NAME, SYMBOLS_ORDERED
 from .formatters import (
     fmt_price,
     pct_text,
@@ -30,6 +30,86 @@ _ticker_offset = 0
 _ticker_last = 0.0
 _prices_page = 0
 _prices_last_p = 0.0
+
+
+def _clamp(v: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, v))
+
+
+def _coinbase_score(sym: str, s: dict) -> dict:
+    price = s["prices"].get(sym, 0)
+    hist = list(s.get("history", {}).get(sym, []))
+    vol_hist = list(s.get("volume_history", {}).get(sym, []))
+    highs = list(s.get("high_history", {}).get(sym, []))
+    lows = list(s.get("low_history", {}).get(sym, []))
+    chg = s["chg24h"].get(sym, 0)
+    spread = s["spread"].get(sym, 0)
+    vol24 = s["vol24"].get(sym, 0)
+
+    rsi = calculate_rsi(hist)
+    ema = calculate_ema_cross(hist)
+    macd = calculate_macd(hist)
+    bb = calculate_bollinger(hist)
+    atr = calculate_atr(highs, lows, hist)
+    rvol = relative_volume(vol_hist, vol24)
+
+    momentum = _clamp(chg / 8, -1, 1) * 22
+    trend = 0
+    if ema["signal"] == "BULL":
+        trend += 18
+    elif ema["signal"] == "BEAR":
+        trend -= 18
+    if ema["cross"]:
+        trend += 6 if ema["signal"] == "BULL" else -6
+
+    macd_pct = (macd["histogram"] / price * 100) if price else 0
+    macd_score = _clamp(macd_pct * 22, -14, 14)
+    if macd["direction"] == "UP":
+        macd_score += 4
+    elif macd["direction"] == "DOWN":
+        macd_score -= 4
+
+    if 45 <= rsi <= 62:
+        rsi_score = 14
+    elif 35 <= rsi < 45 or 62 < rsi <= 70:
+        rsi_score = 6
+    elif rsi < 30:
+        rsi_score = -5
+    else:
+        rsi_score = -12
+
+    bb_zone = bb["zone"]
+    bb_score = {"LOW": 8, "MID": 5, "BELOW": 4, "HIGH": -5, "ABOVE": -10}.get(bb_zone, 0)
+    liquidity = _clamp((rvol - 1) * 7, -4, 12)
+    spread_penalty = _clamp(spread * 35, 0, 14) if spread else 0
+    atr_penalty = _clamp(max(atr - 4, 0) * 3, 0, 12)
+    data_bonus = _clamp(len(hist) / 80, 0, 1) * 8
+
+    raw = 50 + momentum + trend + macd_score + rsi_score + bb_score + liquidity + data_bonus
+    score = round(_clamp(raw - spread_penalty - atr_penalty, 0, 100), 1)
+    risk = "ALTO" if atr >= 4 or spread >= 0.35 else "MEDIO" if atr >= 2 or spread >= 0.15 else "BAJO"
+
+    return {
+        "sym": sym,
+        "price": price,
+        "score": score,
+        "chg": chg,
+        "rsi": rsi,
+        "ema": ema,
+        "macd": macd,
+        "bb": bb,
+        "atr": atr,
+        "rvol": rvol,
+        "spread": spread,
+        "risk": risk,
+        "history": hist,
+    }
+
+
+def _coinbase_rankings(s: dict) -> list[dict]:
+    symbols = sorted(set(COINBASE_SYMBOLS.values()))
+    rows = [_coinbase_score(sym, s) for sym in symbols if s["prices"].get(sym, 0)]
+    return sorted(rows, key=lambda row: row["score"], reverse=True)
 
 
 def panel_header(s: dict) -> Panel:
@@ -184,6 +264,107 @@ def panel_prices(s: dict) -> Panel:
     )
 
 
+def panel_coinbase_top5(s: dict) -> Panel:
+    rankings = _coinbase_rankings(s)
+    tbl = Table(
+        box=box.SIMPLE_HEAVY,
+        border_style="dark_green",
+        header_style="bold bright_green",
+        show_lines=False,
+        expand=True,
+        padding=(0, 1),
+    )
+    tbl.add_column("#", justify="right", min_width=3)
+    tbl.add_column("SYM", style="bold bright_green", min_width=6)
+    tbl.add_column("NOMBRE", style="dim green", min_width=14)
+    tbl.add_column("SCORE", justify="right", min_width=8)
+    tbl.add_column("LAST", justify="right", min_width=14)
+    tbl.add_column("24H%", justify="right", min_width=9)
+    tbl.add_column("RSI", justify="right", min_width=5)
+    tbl.add_column("EMA", justify="center", min_width=7)
+    tbl.add_column("MACD", justify="right", min_width=9)
+    tbl.add_column("BB", justify="center", min_width=7)
+    tbl.add_column("RVOL", justify="right", min_width=6)
+    tbl.add_column("ATR%", justify="right", min_width=7)
+    tbl.add_column("SPREAD", justify="right", min_width=7)
+    tbl.add_column("RIESGO", justify="center", min_width=7)
+    tbl.add_column("SPARK", min_width=14)
+
+    if not rankings:
+        tbl.add_row(
+            "─",
+            "─",
+            Text("Esperando ticks de símbolos Coinbase", style="dim"),
+            *["─"] * 12,
+        )
+    for idx, row in enumerate(rankings[:5], start=1):
+        score = row["score"]
+        score_color = "bold bright_green" if score >= 75 else "green" if score >= 62 else "yellow"
+        ema = row["ema"]
+        if ema["signal"] == "BULL":
+            ema_txt = "▲ BULL"
+            ema_col = "bright_green"
+        elif ema["signal"] == "BEAR":
+            ema_txt = "▼ BEAR"
+            ema_col = "bright_red"
+        else:
+            ema_txt = "─ NEU"
+            ema_col = "yellow"
+        if ema["cross"]:
+            ema_txt += "✦"
+
+        macd = row["macd"]
+        macd_col = "bright_green" if macd["histogram"] > 0 else "bright_red"
+        macd_arrow = "▲" if macd["direction"] == "UP" else "▼"
+        macd_str = f"{macd_arrow}{macd['histogram']:+.3f}" if abs(macd["histogram"]) >= 0.01 else f"{macd_arrow}{macd['histogram']*1000:+.2f}‰"
+
+        risk_col = "bright_red" if row["risk"] == "ALTO" else "yellow" if row["risk"] == "MEDIO" else "green"
+        bb_zone = row["bb"]["zone"]
+        bb_colors = {"ABOVE": "bright_red", "HIGH": "red", "MID": "yellow", "LOW": "green", "BELOW": "bright_green"}
+        bb_icons = {"ABOVE": "↑↑ OB", "HIGH": "↑  HI", "MID": "── MID", "LOW": "↓  LO", "BELOW": "↓↓ OS"}
+
+        tbl.add_row(
+            str(idx),
+            row["sym"],
+            SYMBOL_NAME.get(row["sym"], ""),
+            Text(f"{score:5.1f}", style=score_color),
+            Text(fmt_price(row["price"]), style=price_flash_color(row["sym"], s)),
+            pct_text(row["chg"]),
+            Text(f"{row['rsi']}", style="bright_red" if row["rsi"] > 70 else "bright_green" if row["rsi"] < 30 else "yellow"),
+            Text(ema_txt, style=ema_col),
+            Text(macd_str, style=macd_col),
+            Text(bb_icons.get(bb_zone, bb_zone), style=bb_colors.get(bb_zone, "white")),
+            Text(f"{row['rvol']:.1f}x", style="bright_green" if row["rvol"] > 2.5 else "green" if row["rvol"] > 1.5 else "dim white"),
+            Text(f"{row['atr']:.2f}%" if row["atr"] else "─", style="bright_red" if row["atr"] > 3 else "yellow" if row["atr"] > 1.5 else "dim green"),
+            Text(f"{row['spread']:.3f}%" if row["spread"] else "─", style="dim white"),
+            Text(row["risk"], style=risk_col),
+            sparkline(row["history"], 14),
+        )
+
+    return Panel(
+        tbl,
+        title=(
+            "[bold bright_green]◆ TOP 5 CUANTITATIVO — UNIVERSO COINBASE[/]  "
+            "[dim]score: momentum+EMA+MACD+RSI+BB+RVOL-spread-volatilidad  TAB/I alterna[/]"
+        ),
+        border_style="green",
+    )
+
+
+def panel_quant_legend() -> Panel:
+    tbl = Table.grid(padding=(0, 1), expand=True)
+    tbl.add_column(style="bold bright_green", min_width=10)
+    tbl.add_column(style="dim green")
+    tbl.add_row("SCORE", "0-100; ranking cuantitativo, no garantía")
+    tbl.add_row("Momentum", "cambio 24h normalizado")
+    tbl.add_row("Tendencia", "EMA 9/21 + cruce reciente")
+    tbl.add_row("MACD", "histograma relativo al precio")
+    tbl.add_row("RSI/BB", "premia fuerza no sobrecomprada")
+    tbl.add_row("Liquidez", "RVOL alto y spread bajo")
+    tbl.add_row("Riesgo", "ATR y spread penalizan")
+    return Panel(tbl, title="[bold bright_green]MODELO[/]", border_style="dark_green", padding=(0, 1))
+
+
 def panel_indicators_legend() -> Panel:
     tbl = Table.grid(padding=(0, 1), expand=True)
     tbl.add_column(style="bold bright_green", min_width=9)
@@ -312,18 +493,19 @@ def panel_news(s: dict) -> Panel:
     )
 
 
-def panel_footer(s: dict) -> Panel:
+def panel_footer(s: dict, view: str = "markets") -> Panel:
     ts = datetime.now(timezone.utc).strftime("%H:%M:%S.%f")[:-3] + " UTC"
+    view_name = "TOP 5 COINBASE" if view == "top5" else "MARKETS"
     txt = (
         f"[dim green]● WS LIVE — {s['ws_source']}[/]  "
         f"[dim]{s['ws_ticks']:,} ticks  │  ~{len(SYMBOLS_ORDERED)} pares  │  "
-        f"RSI·EMA·MACD·BB·ATR  │  tabla auto-rota 8s  ticker rota 4s  │  "
+        f"vista: {view_name}  │  TAB/I alternar  M markets  │  "
         f"Ctrl+C salir[/]  [dim green]{ts}[/]"
     )
     return Panel(Text.from_markup(txt), border_style="dark_green", padding=(0, 1))
 
 
-def build_dashboard(s: dict) -> Layout:
+def build_dashboard(s: dict, view: str = "markets") -> Layout:
     layout = Layout()
     layout.split_column(
         Layout(name="header", size=3),
@@ -341,11 +523,15 @@ def build_dashboard(s: dict) -> Layout:
     )
     layout["header"].update(panel_header(s))
     layout["ticker"].update(panel_ticker(s))
-    layout["prices"].update(panel_prices(s))
-    layout["legend"].update(panel_indicators_legend())
+    if view == "top5":
+        layout["prices"].update(panel_coinbase_top5(s))
+        layout["legend"].update(panel_quant_legend())
+    else:
+        layout["prices"].update(panel_prices(s))
+        layout["legend"].update(panel_indicators_legend())
     layout["fg"].update(panel_fg(s))
     layout["global"].update(panel_global(s))
     layout["ws"].update(panel_ws_stats(s))
     layout["news"].update(panel_news(s))
-    layout["footer"].update(panel_footer(s))
+    layout["footer"].update(panel_footer(s, view))
     return layout
