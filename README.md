@@ -98,6 +98,12 @@ Categories:
 pip install websocket-client requests rich
 ```
 
+## Install package
+
+```bash
+pip install -e .
+```
+
 ## Clone repository
 
 ```bash
@@ -113,6 +119,12 @@ cd az-terminal
 
 ```bash
 python3 cryptex_terminal.py
+```
+
+## Start via package entrypoint
+
+```bash
+python -m terminalcrypt
 ```
 
 ## Use Coinbase feed
