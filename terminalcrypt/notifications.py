@@ -40,18 +40,36 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "y")
+
+
 class TelegramSurgeNotifier:
     def __init__(self, state: MarketState):
         _load_dotenv()
         self.state = state
         self.token = os.getenv("TELEGRAM_BOT_TOKEN", "")
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-        self.short_threshold = _env_float("SURGE_ALERT_PCT", 3.0)
-        self.day_threshold = _env_float("SURGE_ALERT_24H_PCT", 8.0)
-        self.day_short_floor = _env_float("SURGE_ALERT_24H_SHORT_PCT", 1.5)
-        self.window = max(3, _env_int("SURGE_ALERT_WINDOW", 12))
-        self.cooldown = max(60, _env_int("SURGE_ALERT_COOLDOWN", 900))
-        self.interval = max(2, _env_int("SURGE_ALERT_INTERVAL", 5))
+        test_mode = _env_bool("SURGE_ALERT_TEST", False)
+
+        if test_mode:
+            self.short_threshold = _env_float("SURGE_ALERT_PCT", 0.1)
+            self.day_threshold = _env_float("SURGE_ALERT_24H_PCT", 0.5)
+            self.day_short_floor = _env_float("SURGE_ALERT_24H_SHORT_PCT", 0.05)
+            self.window = max(3, _env_int("SURGE_ALERT_WINDOW", 3))
+            self.cooldown = max(10, _env_int("SURGE_ALERT_COOLDOWN", 30))
+            self.interval = max(1, _env_int("SURGE_ALERT_INTERVAL", 2))
+        else:
+            self.short_threshold = _env_float("SURGE_ALERT_PCT", 3.0)
+            self.day_threshold = _env_float("SURGE_ALERT_24H_PCT", 8.0)
+            self.day_short_floor = _env_float("SURGE_ALERT_24H_SHORT_PCT", 1.5)
+            self.window = max(3, _env_int("SURGE_ALERT_WINDOW", 12))
+            self.cooldown = max(60, _env_int("SURGE_ALERT_COOLDOWN", 900))
+            self.interval = max(2, _env_int("SURGE_ALERT_INTERVAL", 5))
+
         self._last_sent: dict[str, float] = {}
         self._stop = threading.Event()
 
