@@ -2,16 +2,7 @@ from __future__ import annotations
 
 from .config import COINBASE_SYMBOLS, SYMBOLS_ORDERED
 from .indicators import (
-    calculate_atr,
-    calculate_bollinger,
-    calculate_ema_cross,
-    calculate_macd,
-    calculate_momentum,
-    calculate_moving_averages,
-    calculate_rsi,
-    calculate_signal,
-    calculate_vwap,
-    relative_volume,
+    calculate_indicator_bundle,
 )
 
 
@@ -40,32 +31,22 @@ class AnalyticsCache:
         candles = candles_1m or s.get("candle_history", {}).get(sym, [])
         current_volume = s.get("volume_delta", {}).get(sym, 0)
 
-        rsi = calculate_rsi(hist)
-        rsi_series = [calculate_rsi(hist[: i + 1]) for i in range(len(hist))]
-        ema = calculate_ema_cross(hist)
-        macd = calculate_macd(hist)
-        bb = calculate_bollinger(hist)
-        atr = calculate_atr(highs, lows, hist)
-        rvol = relative_volume(vol_hist, current_volume)
-        vwap = calculate_vwap(candles)
-        averages = calculate_moving_averages(hist)
-        momentum = calculate_momentum(hist, rsi_series)
-        signal = calculate_signal(rsi, ema, macd, bb, momentum)
+        bundle = calculate_indicator_bundle(hist, highs, lows, vol_hist, candles, current_volume)
 
         data = {
             "history": hist,
             "tick_history": tick_hist,
             "candles": candles,
-            "rsi": rsi,
-            "ema": ema,
-            "averages": averages,
-            "vwap": vwap,
-            "macd": macd,
-            "bb": bb,
-            "atr": atr,
-            "rvol": rvol,
-            "momentum": momentum,
-            "signal": signal,
+            "rsi": bundle["rsi"],
+            "ema": bundle["ema"],
+            "averages": bundle["averages"],
+            "vwap": bundle["vwap"],
+            "macd": bundle["macd"],
+            "bb": bundle["bb"],
+            "atr": bundle["atr"],
+            "rvol": bundle["rvol"],
+            "momentum": bundle["momentum"],
+            "signal": bundle["signal"],
         }
         self._indicators[sym] = (tick, data)
         return data

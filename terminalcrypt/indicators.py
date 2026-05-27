@@ -283,6 +283,69 @@ def relative_volume(vol_history: list, current_vol: float) -> float:
     return round(current_vol / avg_vol, 2) if avg_vol > 0 else 1.0
 
 
+def calculate_rsi_series(prices: list, period: int = 14) -> list:
+    if period <= 0:
+        return [50.0] * len(prices)
+    values = [50.0] * min(len(prices), period)
+    gains: list[float] = []
+    losses: list[float] = []
+    gain_sum = 0.0
+    loss_sum = 0.0
+    for i in range(1, len(prices)):
+        diff = prices[i] - prices[i - 1]
+        gain = max(diff, 0)
+        loss = abs(min(diff, 0))
+        gains.append(gain)
+        losses.append(loss)
+        gain_sum += gain
+        loss_sum += loss
+        if len(gains) > period:
+            gain_sum -= gains[-period - 1]
+            loss_sum -= losses[-period - 1]
+        if len(gains) >= period:
+            avg_gain = gain_sum / period
+            avg_loss = loss_sum / period if loss_sum > 0 else 0.0001
+            rs = avg_gain / avg_loss
+            values.append(round(100 - (100 / (1 + rs)), 1))
+    return values
+
+
+def _calculate_indicator_bundle_python(
+    hist: list,
+    highs: list,
+    lows: list,
+    vol_hist: list,
+    candles: list,
+    current_volume: float,
+) -> dict:
+    rsi = calculate_rsi(hist)
+    rsi_series = calculate_rsi_series(hist)
+    ema = calculate_ema_cross(hist)
+    macd = calculate_macd(hist)
+    bb = calculate_bollinger(hist)
+    atr = calculate_atr(highs, lows, hist)
+    rvol = relative_volume(vol_hist, current_volume)
+    vwap = calculate_vwap(candles)
+    averages = calculate_moving_averages(hist)
+    momentum = calculate_momentum(hist, rsi_series)
+    signal = calculate_signal(rsi, ema, macd, bb, momentum)
+    return {
+        "rsi": rsi,
+        "ema": ema,
+        "averages": averages,
+        "vwap": vwap,
+        "macd": macd,
+        "bb": bb,
+        "atr": atr,
+        "rvol": rvol,
+        "momentum": momentum,
+        "signal": signal,
+    }
+
+
+_calculate_indicator_bundle_native = None
+
+
 try:
     from ._cython.indicators_cy import (
         calculate_rsi,
@@ -310,9 +373,31 @@ try:
         calculate_signal,
         relative_volume,
     )
+    try:
+        from ._rust import calculate_indicator_bundle as _calculate_indicator_bundle_native
+    except Exception:
+        pass
 
     _BACKEND = "rust"
 except Exception:
     pass
 
 calculate_signal = _calculate_signal_extended
+
+
+def calculate_indicator_bundle(
+    hist: list,
+    highs: list,
+    lows: list,
+    vol_hist: list,
+    candles: list,
+    current_volume: float,
+) -> dict:
+    if _calculate_indicator_bundle_native is not None:
+        try:
+            data = _calculate_indicator_bundle_native(hist, highs, lows, vol_hist, current_volume)
+            data["vwap"] = calculate_vwap(candles)
+            return data
+        except Exception:
+            pass
+    return _calculate_indicator_bundle_python(hist, highs, lows, vol_hist, candles, current_volume)
