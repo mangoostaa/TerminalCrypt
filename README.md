@@ -93,6 +93,7 @@ Categories:
 ## Requirements
 
 - Python 3.10+
+- Rust toolchain, for the accelerated indicator backend
 - Linux / macOS / Windows
 
 ## Install dependencies
@@ -106,6 +107,38 @@ pip install websocket-client requests rich
 ```bash
 pip install -e .
 ```
+
+TerminalCrypt builds the preferred Rust indicator backend with maturin. If the
+Rust extension is not available, the app falls back to the older Cython backend
+and then to pure Python.
+
+```bash
+pip install maturin
+maturin build --release
+pip install target/wheels/terminalcrypt-*.whl
+```
+
+## Configuration
+
+Copy `terminalcrypt.toml.example` to `terminalcrypt.toml` to set local defaults:
+
+```toml
+[terminalcrypt]
+source = "binance"
+initial_view = "markets"
+selected_symbol = "BTC"
+refresh_per_second = 2
+rest_enabled = true
+telegram_enabled = true
+log_file = "logs/terminalcrypt.log"
+log_level = "INFO"
+fg_interval = 300
+global_interval = 120
+news_interval = 180
+```
+
+Every key can also be overridden with an environment variable prefixed with
+`TERMINALCRYPT_`, for example `TERMINALCRYPT_SOURCE=kraken`.
 
 ## Clone repository
 
@@ -142,6 +175,12 @@ Press `TAB` or `I` in the live dashboard to switch between the rotating markets 
 
 ```bash
 python3 cryptex_terminal.py --source kraken
+```
+
+## Run tests
+
+```bash
+python -m unittest discover -s tests
 ```
 
 ## One-time snapshot

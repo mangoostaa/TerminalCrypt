@@ -18,8 +18,13 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/YOUR_USERNAME/az-terminal"
-Bug Tracker = "https://github.com/YOUR_USERNAME/az-terminal/issues"
+"Bug Tracker" = "https://github.com/YOUR_USERNAME/az-terminal/issues"
 
 [build-system]
-requires = ["setuptools>=61.0", "wheel", "cython>=0.29"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.13,<2"]
+build-backend = "maturin"
+
+[tool.maturin]
+python-source = "."
+module-name = "terminalcrypt._rust"
+features = ["pyo3/extension-module"]

@@ -8,9 +8,12 @@ env/
 venv/
 ENV/
 .env
+terminalcrypt.toml
+logs/
 .python-version
 .idea/
 .vscode/
 *.egg-info/
 dist/
 build/
+target/

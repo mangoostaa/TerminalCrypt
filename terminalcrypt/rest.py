@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import logging
 import time
 import threading
 import xml.etree.ElementTree as ET
@@ -11,6 +12,8 @@ import requests
 from .config import COINGECKO_HEADERS, HEADERS
 from .formatters import now_utc
 from .state import MarketState
+
+log = logging.getLogger(__name__)
 
 
 def _rest_loop(fn, interval: int):
@@ -36,8 +39,8 @@ def _fetch_fg(state: MarketState):
             state.fg_data = r.json().get("data", [])
             state.errors.pop("fg", None)
     except Exception as e:
-        with state._lock:
-            state.errors["fg"] = str(e)[:40]
+        log.warning("fear and greed fetch failed: %s", e)
+        state.set_error("fg", e, limit=40)
 
 
 def _fetch_global(state: MarketState):
@@ -53,8 +56,8 @@ def _fetch_global(state: MarketState):
             state.global_upd = now_utc()
             state.errors.pop("global", None)
     except Exception as e:
-        with state._lock:
-            state.errors["global"] = str(e)[:40]
+        log.warning("global market fetch failed: %s", e)
+        state.set_error("global", e, limit=40)
 
 
 def _fetch_news(state: MarketState):
@@ -84,8 +87,8 @@ def _fetch_news(state: MarketState):
                     state.errors.pop("news", None)
                 return
     except Exception as e:
-        with state._lock:
-            state.errors["news"] = str(e)[:40]
+        log.warning("coingecko news fetch failed: %s", e)
+        state.set_error("news", e, limit=40)
 
     rss_sources = [
         ("CoinTelegraph", "https://cointelegraph.com/rss"),
@@ -156,7 +159,8 @@ def _fetch_news(state: MarketState):
         state.news_upd = now_utc()
 
 
-def start_rest(state: MarketState):
-    _rest_loop(lambda: _fetch_fg(state), 300)
-    _rest_loop(lambda: _fetch_global(state), 120)
-    _rest_loop(lambda: _fetch_news(state), 180)
+def start_rest(state: MarketState, fg_interval: int = 300, global_interval: int = 120, news_interval: int = 180):
+    log.info("starting rest loops fg=%ss global=%ss news=%ss", fg_interval, global_interval, news_interval)
+    _rest_loop(lambda: _fetch_fg(state), fg_interval)
+    _rest_loop(lambda: _fetch_global(state), global_interval)
+    _rest_loop(lambda: _fetch_news(state), news_interval)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 import threading
 import websocket
@@ -16,6 +17,8 @@ from .config import (
 )
 from .formatters import now_utc
 from .state import MarketState
+
+log = logging.getLogger(__name__)
 
 
 class BinanceStream:
@@ -35,6 +38,7 @@ class BinanceStream:
             self.state.ws_source = "Binance"
             self.state.ws_status = "connected ✓"
             self.state.ws_since = now_utc()
+            self.state.errors.pop("binance_ws", None)
         self._reconnect_delay = 2
 
     def _on_message(self, ws, raw: str):
@@ -53,13 +57,15 @@ class BinanceStream:
             vol = float(data["v"])
             lat_ms = (time.perf_counter() - t0) * 1000
             self.state.update_tick(sym, price, chg24, high, low, vol, latency_ms=lat_ms)
-        except Exception:
-            pass
+            self.state.clear_error("binance_msg")
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as e:
+            self.state.set_error("binance_msg", e)
 
     def _on_error(self, ws, err):
+        log.warning("binance websocket error: %s", err)
         with self.state._lock:
             self.state.ws_status = f"error: {str(err)[:30]}"
-            self.state.errors["ws"] = str(err)[:60]
+        self.state.set_error("binance_ws", err)
 
     def _on_close(self, ws, code, reason):
         with self.state._lock:
@@ -118,6 +124,7 @@ class CoinbaseStream:
             self.state.ws_source = "Coinbase"
             self.state.ws_status = "connected ✓"
             self.state.ws_since = now_utc()
+            self.state.errors.pop("coinbase_ws", None)
         self._delay = 2
 
     def _on_message(self, ws, raw: str):
@@ -139,12 +146,15 @@ class CoinbaseStream:
                     bid = float(tick.get("best_bid", 0) or 0)
                     ask = float(tick.get("best_ask", 0) or 0)
                     self.state.update_tick(sym, price, chg24, high, low, vol, bid, ask)
-        except Exception:
-            pass
+            self.state.clear_error("coinbase_msg")
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as e:
+            self.state.set_error("coinbase_msg", e)
 
     def _on_error(self, ws, err):
+        log.warning("coinbase websocket error: %s", err)
         with self.state._lock:
             self.state.ws_status = f"error: {str(err)[:30]}"
+        self.state.set_error("coinbase_ws", err)
 
     def _on_close(self, ws, code, reason):
         with self.state._lock:
@@ -199,6 +209,7 @@ class KrakenStream:
             self.state.ws_source = "Kraken"
             self.state.ws_status = "connected ✓"
             self.state.ws_since = now_utc()
+            self.state.errors.pop("kraken_ws", None)
         self._delay = 2
 
     def _on_message(self, ws, raw: str):
@@ -219,12 +230,15 @@ class KrakenStream:
                 bid = float(d.get("bid", 0) or 0)
                 ask = float(d.get("ask", 0) or 0)
                 self.state.update_tick(sym, price, chg24, high, low, vol, bid, ask)
-        except Exception:
-            pass
+            self.state.clear_error("kraken_msg")
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as e:
+            self.state.set_error("kraken_msg", e)
 
     def _on_error(self, ws, err):
+        log.warning("kraken websocket error: %s", err)
         with self.state._lock:
             self.state.ws_status = f"error: {str(err)[:30]}"
+        self.state.set_error("kraken_ws", err)
 
     def _on_close(self, ws, *args):
         with self.state._lock:

@@ -45,6 +45,15 @@ class MarketState:
 
         self.errors: dict = {}
 
+    def set_error(self, key: str, err: object, limit: int = 80) -> None:
+        msg = f"{type(err).__name__}: {err}" if isinstance(err, Exception) else str(err)
+        with self._lock:
+            self.errors[key] = msg[:limit]
+
+    def clear_error(self, key: str) -> None:
+        with self._lock:
+            self.errors.pop(key, None)
+
     def update_tick(
         self,
         sym: str,

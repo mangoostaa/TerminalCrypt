@@ -9,21 +9,13 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
-from .config import COINBASE_SYMBOLS, SYMBOL_CATEGORIES, SYMBOL_NAME, SYMBOLS_ORDERED
+from .analytics import analytics_cache
+from .config import SYMBOL_CATEGORIES, SYMBOL_NAME, SYMBOLS_ORDERED
 from .formatters import (
     fmt_price,
     pct_text,
     price_flash_color,
     sparkline,
-)
-from .indicators import (
-    calculate_atr,
-    calculate_bollinger,
-    calculate_ema_cross,
-    calculate_macd,
-    calculate_rsi,
-    calculate_signal,
-    relative_volume,
 )
 
 _ticker_offset = 0
@@ -32,84 +24,8 @@ _prices_page = 0
 _prices_last_p = 0.0
 
 
-def _clamp(v: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, v))
-
-
-def _coinbase_score(sym: str, s: dict) -> dict:
-    price = s["prices"].get(sym, 0)
-    hist = list(s.get("history", {}).get(sym, []))
-    vol_hist = list(s.get("volume_history", {}).get(sym, []))
-    highs = list(s.get("high_history", {}).get(sym, []))
-    lows = list(s.get("low_history", {}).get(sym, []))
-    chg = s["chg24h"].get(sym, 0)
-    spread = s["spread"].get(sym, 0)
-    vol24 = s["vol24"].get(sym, 0)
-
-    rsi = calculate_rsi(hist)
-    ema = calculate_ema_cross(hist)
-    macd = calculate_macd(hist)
-    bb = calculate_bollinger(hist)
-    atr = calculate_atr(highs, lows, hist)
-    rvol = relative_volume(vol_hist, vol24)
-
-    momentum = _clamp(chg / 8, -1, 1) * 22
-    trend = 0
-    if ema["signal"] == "BULL":
-        trend += 18
-    elif ema["signal"] == "BEAR":
-        trend -= 18
-    if ema["cross"]:
-        trend += 6 if ema["signal"] == "BULL" else -6
-
-    macd_pct = (macd["histogram"] / price * 100) if price else 0
-    macd_score = _clamp(macd_pct * 22, -14, 14)
-    if macd["direction"] == "UP":
-        macd_score += 4
-    elif macd["direction"] == "DOWN":
-        macd_score -= 4
-
-    if 45 <= rsi <= 62:
-        rsi_score = 14
-    elif 35 <= rsi < 45 or 62 < rsi <= 70:
-        rsi_score = 6
-    elif rsi < 30:
-        rsi_score = -5
-    else:
-        rsi_score = -12
-
-    bb_zone = bb["zone"]
-    bb_score = {"LOW": 8, "MID": 5, "BELOW": 4, "HIGH": -5, "ABOVE": -10}.get(bb_zone, 0)
-    liquidity = _clamp((rvol - 1) * 7, -4, 12)
-    spread_penalty = _clamp(spread * 35, 0, 14) if spread else 0
-    atr_penalty = _clamp(max(atr - 4, 0) * 3, 0, 12)
-    data_bonus = _clamp(len(hist) / 80, 0, 1) * 8
-
-    raw = 50 + momentum + trend + macd_score + rsi_score + bb_score + liquidity + data_bonus
-    score = round(_clamp(raw - spread_penalty - atr_penalty, 0, 100), 1)
-    risk = "ALTO" if atr >= 4 or spread >= 0.35 else "MEDIO" if atr >= 2 or spread >= 0.15 else "BAJO"
-
-    return {
-        "sym": sym,
-        "price": price,
-        "score": score,
-        "chg": chg,
-        "rsi": rsi,
-        "ema": ema,
-        "macd": macd,
-        "bb": bb,
-        "atr": atr,
-        "rvol": rvol,
-        "spread": spread,
-        "risk": risk,
-        "history": hist,
-    }
-
-
 def _coinbase_rankings(s: dict) -> list[dict]:
-    symbols = sorted(set(COINBASE_SYMBOLS.values()))
-    rows = [_coinbase_score(sym, s) for sym in symbols if s["prices"].get(sym, 0)]
-    return sorted(rows, key=lambda row: row["score"], reverse=True)
+    return analytics_cache.coinbase_rankings(s)
 
 
 def panel_header(s: dict) -> Panel:
@@ -205,19 +121,15 @@ def panel_prices(s: dict) -> Panel:
 
         chg = s["chg24h"].get(sym, 0)
         spread = s["spread"].get(sym, 0)
-        hist = list(s.get("history", {}).get(sym, []))
-        vol_hist = list(s.get("volume_history", {}).get(sym, []))
-        highs = list(s.get("high_history", {}).get(sym, []))
-        lows = list(s.get("low_history", {}).get(sym, []))
-        vol24 = s["vol24"].get(sym, 0)
-
-        rsi = calculate_rsi(hist)
-        ema_data = calculate_ema_cross(hist)
-        macd_data = calculate_macd(hist)
-        bb_data = calculate_bollinger(hist)
-        atr_pct = calculate_atr(highs, lows, hist)
-        rel_vol = relative_volume(vol_hist, vol24)
-        sig_data = calculate_signal(rsi, ema_data, macd_data, bb_data)
+        analytics = analytics_cache.indicators(sym, s)
+        hist = analytics["history"]
+        rsi = analytics["rsi"]
+        ema_data = analytics["ema"]
+        macd_data = analytics["macd"]
+        bb_data = analytics["bb"]
+        atr_pct = analytics["atr"]
+        rel_vol = analytics["rvol"]
+        sig_data = analytics["signal"]
 
         price_col = price_flash_color(sym, s)
         rsi_color = "bright_red" if rsi > 70 else "bright_green" if rsi < 30 else "yellow"
@@ -347,6 +259,78 @@ def panel_coinbase_top5(s: dict) -> Panel:
             "[bold bright_green]◆ TOP 5 CUANTITATIVO — UNIVERSO COINBASE[/]  "
             "[dim]score: momentum+EMA+MACD+RSI+BB+RVOL-spread-volatilidad  TAB/I alterna[/]"
         ),
+        border_style="green",
+    )
+
+
+def panel_symbol_detail(s: dict, selected_symbol: str = "BTC") -> Panel:
+    sym = selected_symbol if s["prices"].get(selected_symbol, 0) else next(
+        (item for item in SYMBOLS_ORDERED if s["prices"].get(item, 0)),
+        selected_symbol,
+    )
+    price = s["prices"].get(sym, 0)
+    if not price:
+        return Panel(
+            Text(f"Esperando datos de {sym}", style="dim green"),
+            title=f"[bold bright_green]DETALLE - {sym}[/]",
+            border_style="green",
+        )
+
+    chg = s["chg24h"].get(sym, 0)
+    spread = s["spread"].get(sym, 0)
+    high = s["high24"].get(sym, 0)
+    low = s["low24"].get(sym, 0)
+    vol = s["vol24"].get(sym, 0)
+    ticks = s["tick_count"].get(sym, 0)
+    last_tick = s["last_tick"].get(sym, "-")
+    latency = s["latency_ms"].get(sym, 0)
+    analytics = analytics_cache.indicators(sym, s)
+    hist = analytics["history"]
+    ema = analytics["ema"]
+    macd = analytics["macd"]
+    bb = analytics["bb"]
+    sig = analytics["signal"]
+
+    grid = Table.grid(padding=(0, 2), expand=True)
+    grid.add_column(ratio=1)
+    grid.add_column(ratio=1)
+    grid.add_column(ratio=1)
+
+    market = Table.grid(padding=(0, 1), expand=True)
+    market.add_column(style="dim green")
+    market.add_column(justify="right")
+    market.add_row("PRECIO", Text(fmt_price(price), style=price_flash_color(sym, s)))
+    market.add_row("24H", pct_text(chg))
+    market.add_row("HIGH", Text(fmt_price(high), style="bright_white"))
+    market.add_row("LOW", Text(fmt_price(low), style="bright_white"))
+    market.add_row("VOL", Text(fmt_price(vol), style="bright_white"))
+    market.add_row("SPREAD", Text(f"{spread:.3f}%" if spread else "-", style="dim white"))
+
+    technical = Table.grid(padding=(0, 1), expand=True)
+    technical.add_column(style="dim green")
+    technical.add_column(justify="right")
+    technical.add_row("RSI", Text(str(analytics["rsi"]), style="yellow"))
+    technical.add_row("EMA", Text(ema["signal"], style="bright_green" if ema["signal"] == "BULL" else "bright_red"))
+    technical.add_row("MACD", Text(f"{macd['histogram']:+.6f}", style="bright_green" if macd["histogram"] > 0 else "bright_red"))
+    technical.add_row("MACD DIR", Text(macd["direction"], style="green" if macd["direction"] == "UP" else "red"))
+    technical.add_row("BB", Text(bb["zone"], style="yellow"))
+    technical.add_row("ATR", Text(f"{analytics['atr']:.2f}%" if analytics["atr"] else "-", style="dim green"))
+    technical.add_row("RVOL", Text(f"{analytics['rvol']:.1f}x", style="bright_green" if analytics["rvol"] > 2 else "dim white"))
+
+    signal = Table.grid(padding=(0, 1), expand=True)
+    signal.add_column(style="dim green")
+    signal.add_column(justify="right")
+    signal.add_row("SENAL", Text(sig["signal"], style=sig["color"]))
+    signal.add_row("SCORE", Text(str(sig["score"]), style=sig["color"]))
+    signal.add_row("TICKS", Text(f"{ticks:,}", style="bright_white"))
+    signal.add_row("LAST", Text(last_tick, style="dim green"))
+    signal.add_row("LAT", Text(f"{latency:.1f}ms" if latency else "-", style="dim green"))
+    signal.add_row("SPARK", sparkline(hist, 24))
+
+    grid.add_row(market, technical, signal)
+    return Panel(
+        grid,
+        title=f"[bold bright_green]DETALLE - {sym}[/] [dim]{SYMBOL_NAME.get(sym, '')}[/]",
         border_style="green",
     )
 
@@ -495,17 +479,17 @@ def panel_news(s: dict) -> Panel:
 
 def panel_footer(s: dict, view: str = "markets") -> Panel:
     ts = datetime.now(timezone.utc).strftime("%H:%M:%S.%f")[:-3] + " UTC"
-    view_name = "TOP 5 COINBASE" if view == "top5" else "MARKETS"
+    view_name = "DETALLE" if view == "detail" else "TOP 5 COINBASE" if view == "top5" else "MARKETS"
     txt = (
         f"[dim green]● WS LIVE — {s['ws_source']}[/]  "
         f"[dim]{s['ws_ticks']:,} ticks  │  ~{len(SYMBOLS_ORDERED)} pares  │  "
-        f"vista: {view_name}  │  TAB/I alternar  M markets  │  "
+        f"vista: {view_name}  │  TAB/I alternar  D detalle  N/P simbolo  M markets  │  "
         f"Ctrl+C salir[/]  [dim green]{ts}[/]"
     )
     return Panel(Text.from_markup(txt), border_style="dark_green", padding=(0, 1))
 
 
-def build_dashboard(s: dict, view: str = "markets") -> Layout:
+def build_dashboard(s: dict, view: str = "markets", selected_symbol: str = "BTC") -> Layout:
     layout = Layout()
     layout.split_column(
         Layout(name="header", size=3),
@@ -523,7 +507,10 @@ def build_dashboard(s: dict, view: str = "markets") -> Layout:
     )
     layout["header"].update(panel_header(s))
     layout["ticker"].update(panel_ticker(s))
-    if view == "top5":
+    if view == "detail":
+        layout["prices"].update(panel_symbol_detail(s, selected_symbol))
+        layout["legend"].update(panel_indicators_legend())
+    elif view == "top5":
         layout["prices"].update(panel_coinbase_top5(s))
         layout["legend"].update(panel_quant_legend())
     else:
