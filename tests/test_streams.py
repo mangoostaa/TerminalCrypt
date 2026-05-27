@@ -24,6 +24,7 @@ class StreamParserTests(unittest.TestCase):
         stream._on_message(None, json.dumps(payload))
         snap = state.snapshot()
         self.assertEqual(snap["prices"]["BTC"], 100.0)
+        self.assertEqual(snap["candle_history"]["BTC"][-1]["open"], 100.0)
         self.assertNotIn("binance_msg", snap["errors"])
 
     def test_coinbase_message_updates_state(self):

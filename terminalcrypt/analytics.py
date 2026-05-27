@@ -6,8 +6,11 @@ from .indicators import (
     calculate_bollinger,
     calculate_ema_cross,
     calculate_macd,
+    calculate_momentum,
+    calculate_moving_averages,
     calculate_rsi,
     calculate_signal,
+    calculate_vwap,
     relative_volume,
 )
 
@@ -31,24 +34,33 @@ class AnalyticsCache:
         vol_hist = s.get("volume_history", {}).get(sym, [])
         highs = s.get("high_history", {}).get(sym, [])
         lows = s.get("low_history", {}).get(sym, [])
+        candles = s.get("candle_history", {}).get(sym, [])
         vol24 = s.get("vol24", {}).get(sym, 0)
 
         rsi = calculate_rsi(hist)
+        rsi_series = [calculate_rsi(hist[: i + 1]) for i in range(len(hist))]
         ema = calculate_ema_cross(hist)
         macd = calculate_macd(hist)
         bb = calculate_bollinger(hist)
         atr = calculate_atr(highs, lows, hist)
         rvol = relative_volume(vol_hist, vol24)
-        signal = calculate_signal(rsi, ema, macd, bb)
+        vwap = calculate_vwap(candles)
+        averages = calculate_moving_averages(hist)
+        momentum = calculate_momentum(hist, rsi_series)
+        signal = calculate_signal(rsi, ema, macd, bb, momentum)
 
         data = {
             "history": hist,
+            "candles": candles,
             "rsi": rsi,
             "ema": ema,
+            "averages": averages,
+            "vwap": vwap,
             "macd": macd,
             "bb": bb,
             "atr": atr,
             "rvol": rvol,
+            "momentum": momentum,
             "signal": signal,
         }
         self._indicators[sym] = (tick, data)
@@ -71,8 +83,12 @@ class AnalyticsCache:
         bb = analytics["bb"]
         atr = analytics["atr"]
         rvol = analytics["rvol"]
+        momentum_extra = analytics["momentum"]
+        vwap = analytics["vwap"]
 
         momentum = _clamp(chg / 8, -1, 1) * 22
+        intraday = self.intraday_change(sym, s)
+        intraday_score = _clamp(intraday / 5, -1, 1) * 10
         trend = 0
         if ema["signal"] == "BULL":
             trend += 18
@@ -99,12 +115,15 @@ class AnalyticsCache:
 
         bb_zone = bb["zone"]
         bb_score = {"LOW": 8, "MID": 5, "BELOW": 4, "HIGH": -5, "ABOVE": -10}.get(bb_zone, 0)
+        squeeze_bonus = 5 if momentum_extra["squeeze"] == "FIRED" else 2 if momentum_extra["squeeze"] == "ON" else 0
+        divergence_bonus = 5 if momentum_extra["divergence"] == "BULL" else -7 if momentum_extra["divergence"] == "BEAR" else 0
+        vwap_bonus = 4 if vwap and price > vwap else -4 if vwap and price < vwap else 0
         liquidity = _clamp((rvol - 1) * 7, -4, 12)
         spread_penalty = _clamp(spread * 35, 0, 14) if spread else 0
         atr_penalty = _clamp(max(atr - 4, 0) * 3, 0, 12)
         data_bonus = _clamp(len(hist) / 80, 0, 1) * 8
 
-        raw = 50 + momentum + trend + macd_score + rsi_score + bb_score + liquidity + data_bonus
+        raw = 50 + momentum + intraday_score + trend + macd_score + rsi_score + bb_score + squeeze_bonus + divergence_bonus + vwap_bonus + liquidity + data_bonus
         score = round(_clamp(raw - spread_penalty - atr_penalty, 0, 100), 1)
         risk = "ALTO" if atr >= 4 or spread >= 0.35 else "MEDIO" if atr >= 2 or spread >= 0.15 else "BAJO"
 
@@ -119,6 +138,10 @@ class AnalyticsCache:
             "bb": bb,
             "atr": atr,
             "rvol": rvol,
+            "vwap": vwap,
+            "averages": analytics["averages"],
+            "momentum": momentum_extra,
+            "intraday": intraday,
             "spread": spread,
             "risk": risk,
             "history": hist,
@@ -130,6 +153,40 @@ class AnalyticsCache:
         symbols = sorted(set(COINBASE_SYMBOLS.values()))
         rows = [self.coinbase_score(sym, s) for sym in symbols if s["prices"].get(sym, 0)]
         return sorted(rows, key=lambda row: row["score"], reverse=True)
+
+    def intraday_change(self, sym: str, s: dict) -> float:
+        candles = s.get("candle_history", {}).get(sym, [])
+        if candles:
+            first_open = float(candles[0].get("open", 0) or 0)
+            last_close = float(candles[-1].get("close", 0) or 0)
+            return round((last_close - first_open) / first_open * 100, 2) if first_open else 0.0
+        hist = s.get("history", {}).get(sym, [])
+        return round((hist[-1] - hist[0]) / hist[0] * 100, 2) if len(hist) >= 2 and hist[0] else 0.0
+
+    def intraday_rankings(self, s: dict, limit: int = 8) -> list[dict]:
+        rows = []
+        for sym, price in s.get("prices", {}).items():
+            if price:
+                rows.append({
+                    "sym": sym,
+                    "price": price,
+                    "intraday": self.intraday_change(sym, s),
+                    "chg": s.get("chg24h", {}).get(sym, 0),
+                })
+        return sorted(rows, key=lambda row: row["intraday"], reverse=True)[:limit]
+
+    def volume_rankings(self, s: dict, limit: int = 8) -> list[dict]:
+        rows = []
+        for sym, price in s.get("prices", {}).items():
+            if price:
+                analytics = self.indicators(sym, s)
+                rows.append({
+                    "sym": sym,
+                    "price": price,
+                    "volume": s.get("vol24", {}).get(sym, 0),
+                    "rvol": analytics["rvol"],
+                })
+        return sorted(rows, key=lambda row: (row["rvol"], row["volume"]), reverse=True)[:limit]
 
 
 analytics_cache = AnalyticsCache()

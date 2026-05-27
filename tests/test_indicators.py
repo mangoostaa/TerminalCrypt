@@ -20,6 +20,16 @@ class IndicatorTests(unittest.TestCase):
         self.assertIn("histogram", indicators.calculate_macd(prices))
         self.assertIn("zone", indicators.calculate_bollinger(prices))
         self.assertIsInstance(indicators.calculate_atr(highs, lows, prices), float)
+        self.assertEqual(len(indicators.calculate_sma(prices, 20)), len(prices))
+        self.assertIsNotNone(indicators.latest_ema(prices, 50))
+
+        candles = [
+            {"open": p - 0.5, "high": p + 1, "low": p - 1, "close": p, "volume": 100 + i}
+            for i, p in enumerate(prices)
+        ]
+        self.assertIsInstance(indicators.calculate_vwap(candles), float)
+        self.assertIn(indicators.calculate_momentum(prices)["state"], {"BULL", "BEAR", "NEUTRAL"})
+        self.assertIn("sma", indicators.calculate_moving_averages(prices))
 
 
 if __name__ == "__main__":

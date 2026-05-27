@@ -26,6 +26,53 @@ def calculate_ema(prices: list, period: int) -> list:
     return result
 
 
+def calculate_sma(prices: list, period: int) -> list:
+    if period <= 0:
+        return [None] * len(prices)
+    result = []
+    for i in range(len(prices)):
+        if i + 1 < period:
+            result.append(None)
+        else:
+            sample = prices[i + 1 - period : i + 1]
+            result.append(sum(sample) / period)
+    return result
+
+
+def latest_sma(prices: list, period: int) -> float | None:
+    vals = [v for v in calculate_sma(prices, period) if v is not None]
+    return round(vals[-1], 6) if vals else None
+
+
+def latest_ema(prices: list, period: int) -> float | None:
+    vals = [v for v in calculate_ema(prices, period) if v is not None]
+    return round(vals[-1], 6) if vals else None
+
+
+def calculate_vwap(candles: list, period: int = 20) -> float | None:
+    if not candles:
+        return None
+    sample = candles[-period:] if period else candles
+    pv_sum = 0.0
+    vol_sum = 0.0
+    for candle in sample:
+        high = float(candle.get("high", 0) or 0)
+        low = float(candle.get("low", 0) or 0)
+        close = float(candle.get("close", 0) or 0)
+        volume = float(candle.get("volume", 0) or 0)
+        typical = (high + low + close) / 3 if high and low and close else close
+        pv_sum += typical * volume
+        vol_sum += volume
+    return round(pv_sum / vol_sum, 6) if vol_sum > 0 else None
+
+
+def calculate_moving_averages(prices: list, sma_periods: tuple = (20, 50), ema_periods: tuple = (9, 21, 50)) -> dict:
+    return {
+        "sma": {period: latest_sma(prices, period) for period in sma_periods},
+        "ema": {period: latest_ema(prices, period) for period in ema_periods},
+    }
+
+
 def calculate_ema_cross(prices: list, fast: int = 9, slow: int = 21) -> dict:
     if len(prices) < slow + 1:
         return {"signal": "NEUTRAL", "ema_fast": None, "ema_slow": None, "cross": False}
@@ -99,6 +146,17 @@ def calculate_bollinger(prices: list, period: int = 20, std_mult: float = 2.0) -
     }
 
 
+def bollinger_bandwidth_series(prices: list, period: int = 20, std_mult: float = 2.0) -> list:
+    values = []
+    for i in range(period, len(prices) + 1):
+        sample = prices[i - period : i]
+        mid = sum(sample) / period
+        variance = sum((p - mid) ** 2 for p in sample) / period
+        std = variance ** 0.5
+        values.append(((std_mult * 2 * std) / mid * 100) if mid else 0)
+    return values
+
+
 def calculate_atr(highs: list, lows: list, closes: list, period: int = 14) -> float:
     n = min(len(highs), len(lows), len(closes))
     if n < period + 1:
@@ -118,7 +176,56 @@ def calculate_atr(highs: list, lows: list, closes: list, period: int = 14) -> fl
     return round((atr / price * 100), 3) if price else 0.0
 
 
-def calculate_signal(rsi: float, ema_cross: dict, macd: dict, bb: dict) -> dict:
+def calculate_momentum(prices: list, rsi_values: list | None = None, period: int = 10) -> dict:
+    if len(prices) <= period:
+        return {"roc": 0.0, "state": "NEUTRAL", "divergence": "-", "squeeze": "-"}
+    prev = prices[-period - 1]
+    roc = ((prices[-1] - prev) / prev * 100) if prev else 0.0
+    if roc >= 2:
+        state = "BULL"
+    elif roc <= -2:
+        state = "BEAR"
+    else:
+        state = "NEUTRAL"
+
+    divergence = "-"
+    if len(prices) >= 30:
+        left = prices[-30:-15]
+        right = prices[-15:]
+        left_high = max(left)
+        right_high = max(right)
+        left_low = min(left)
+        right_low = min(right)
+        if rsi_values and len(rsi_values) >= 30:
+            left_rsi = max(rsi_values[-30:-15])
+            right_rsi = max(rsi_values[-15:])
+            left_rsi_low = min(rsi_values[-30:-15])
+            right_rsi_low = min(rsi_values[-15:])
+            if right_high > left_high and right_rsi < left_rsi:
+                divergence = "BEAR"
+            elif right_low < left_low and right_rsi_low > left_rsi_low:
+                divergence = "BULL"
+
+    widths = bollinger_bandwidth_series(prices)
+    squeeze = "-"
+    if len(widths) >= 20:
+        recent = widths[-1]
+        baseline = sorted(widths[-20:])
+        threshold = baseline[max(0, int(len(baseline) * 0.2) - 1)]
+        if recent <= threshold:
+            squeeze = "ON"
+        elif len(widths) >= 2 and widths[-2] <= threshold < recent:
+            squeeze = "FIRED"
+
+    return {
+        "roc": round(roc, 2),
+        "state": state,
+        "divergence": divergence,
+        "squeeze": squeeze,
+    }
+
+
+def _calculate_signal_extended(rsi: float, ema_cross: dict, macd: dict, bb: dict, momentum: dict | None = None) -> dict:
     score = 0
     if rsi < 30:
         score += 1
@@ -141,6 +248,17 @@ def calculate_signal(rsi: float, ema_cross: dict, macd: dict, bb: dict) -> dict:
         score += 1
     elif zone in ("HIGH", "ABOVE"):
         score -= 1
+    if momentum:
+        if momentum.get("state") == "BULL":
+            score += 1
+        elif momentum.get("state") == "BEAR":
+            score -= 1
+        if momentum.get("divergence") == "BULL":
+            score += 1
+        elif momentum.get("divergence") == "BEAR":
+            score -= 1
+        if momentum.get("squeeze") == "FIRED":
+            score += 1 if macd.get("histogram", 0) >= 0 else -1
     if score >= 3:
         sig, col, icon = "STR LONG", "bold bright_green", "OO"
     elif score >= 1:
@@ -152,6 +270,9 @@ def calculate_signal(rsi: float, ema_cross: dict, macd: dict, bb: dict) -> dict:
     else:
         sig, col, icon = "NEUTRAL", "yellow", "oo"
     return {"score": score, "signal": sig, "color": col, "icon": icon}
+
+
+calculate_signal = _calculate_signal_extended
 
 
 def relative_volume(vol_history: list, current_vol: float) -> float:
@@ -193,3 +314,5 @@ try:
     _BACKEND = "rust"
 except Exception:
     pass
+
+calculate_signal = _calculate_signal_extended

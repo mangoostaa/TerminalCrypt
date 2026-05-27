@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from terminalcrypt.analytics import analytics_cache
 from terminalcrypt.dashboard import build_dashboard
 from terminalcrypt.state import MarketState
 
@@ -15,6 +16,8 @@ class DashboardTests(unittest.TestCase):
         build_dashboard(snap, "markets", "BTC")
         build_dashboard(snap, "detail", "BTC")
         build_dashboard(snap, "top5", "BTC")
+        self.assertEqual(analytics_cache.intraday_rankings(snap, 1)[0]["sym"], "BTC")
+        self.assertEqual(analytics_cache.volume_rankings(snap, 1)[0]["sym"], "BTC")
 
 
 if __name__ == "__main__":

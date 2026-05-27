@@ -96,10 +96,15 @@ def panel_prices(s: dict) -> Panel:
     tbl.add_column("SYM", style="bold bright_green", min_width=6)
     tbl.add_column("NOMBRE", style="dim green", min_width=14)
     tbl.add_column("LAST", justify="right", min_width=14)
+    tbl.add_column("INTRA", justify="right", min_width=8)
     tbl.add_column("24H%", justify="right", min_width=9)
     tbl.add_column("RSI", justify="right", min_width=5)
     tbl.add_column("EMA", justify="center", min_width=7)
     tbl.add_column("MACD", justify="right", min_width=9)
+    tbl.add_column("VWAP", justify="right", min_width=10)
+    tbl.add_column("SMA20", justify="right", min_width=10)
+    tbl.add_column("MOM", justify="center", min_width=8)
+    tbl.add_column("SQZ", justify="center", min_width=5)
     tbl.add_column("BB", justify="center", min_width=7)
     tbl.add_column("ATR%", justify="right", min_width=6)
     tbl.add_column("SIGNAL", justify="center", min_width=10)
@@ -115,18 +120,22 @@ def panel_prices(s: dict) -> Panel:
                 Text(sym, style="dim"),
                 Text(SYMBOL_NAME.get(sym, ""), style="dim"),
                 Text("─ esperando", style="dim"),
-                *["─"] * 10,
+                *["─"] * 15,
             )
             continue
 
         chg = s["chg24h"].get(sym, 0)
         spread = s["spread"].get(sym, 0)
         analytics = analytics_cache.indicators(sym, s)
+        intra = analytics_cache.intraday_change(sym, s)
         hist = analytics["history"]
         rsi = analytics["rsi"]
         ema_data = analytics["ema"]
         macd_data = analytics["macd"]
         bb_data = analytics["bb"]
+        vwap = analytics["vwap"]
+        sma20 = analytics["averages"]["sma"].get(20)
+        mom = analytics["momentum"]
         atr_pct = analytics["atr"]
         rel_vol = analytics["rvol"]
         sig_data = analytics["signal"]
@@ -144,6 +153,12 @@ def panel_prices(s: dict) -> Panel:
         macd_col = "bright_green" if hist_val > 0 else "bright_red"
         macd_arrow = "▲" if macd_data["direction"] == "UP" else "▼"
         macd_str = f"{macd_arrow}{hist_val:+.3f}" if abs(hist_val) >= 0.01 else f"{macd_arrow}{hist_val*1000:+.2f}‰"
+        vwap_col = "bright_green" if vwap and price >= vwap else "bright_red" if vwap else "dim"
+        mom_col = "bright_green" if mom["state"] == "BULL" else "bright_red" if mom["state"] == "BEAR" else "yellow"
+        mom_txt = f"{mom['roc']:+.1f}%"
+        if mom["divergence"] != "-":
+            mom_txt += f" {mom['divergence'][:1]}D"
+        sqz_col = "yellow" if mom["squeeze"] == "ON" else "bright_green" if mom["squeeze"] == "FIRED" else "dim"
 
         bb_zone = bb_data["zone"]
         bb_colors = {"ABOVE": "bright_red", "HIGH": "red", "MID": "yellow", "LOW": "green", "BELOW": "bright_green"}
@@ -154,10 +169,15 @@ def panel_prices(s: dict) -> Panel:
             sym,
             SYMBOL_NAME.get(sym, ""),
             Text(fmt_price(price), style=price_col),
+            pct_text(intra),
             pct_text(chg),
             Text(f"{rsi}", style=rsi_color),
             Text(ema_txt, style=ema_col),
             Text(macd_str, style=macd_col),
+            Text(fmt_price(vwap) if vwap else "─", style=vwap_col),
+            Text(fmt_price(sma20) if sma20 else "─", style="dim white"),
+            Text(mom_txt, style=mom_col),
+            Text(mom["squeeze"], style=sqz_col),
             Text(bb_icons.get(bb_zone, bb_zone), style=bb_colors.get(bb_zone, "white")),
             Text(f"{atr_pct:.2f}%" if atr_pct else "─", style=atr_col),
             Text(sig_data["signal"], style=sig_data["color"]),
@@ -191,10 +211,13 @@ def panel_coinbase_top5(s: dict) -> Panel:
     tbl.add_column("NOMBRE", style="dim green", min_width=14)
     tbl.add_column("SCORE", justify="right", min_width=8)
     tbl.add_column("LAST", justify="right", min_width=14)
+    tbl.add_column("INTRA", justify="right", min_width=8)
     tbl.add_column("24H%", justify="right", min_width=9)
     tbl.add_column("RSI", justify="right", min_width=5)
     tbl.add_column("EMA", justify="center", min_width=7)
     tbl.add_column("MACD", justify="right", min_width=9)
+    tbl.add_column("VWAP", justify="right", min_width=10)
+    tbl.add_column("MOM", justify="center", min_width=8)
     tbl.add_column("BB", justify="center", min_width=7)
     tbl.add_column("RVOL", justify="right", min_width=6)
     tbl.add_column("ATR%", justify="right", min_width=7)
@@ -207,7 +230,7 @@ def panel_coinbase_top5(s: dict) -> Panel:
             "─",
             "─",
             Text("Esperando ticks de símbolos Coinbase", style="dim"),
-            *["─"] * 12,
+            *["─"] * 15,
         )
     for idx, row in enumerate(rankings[:5], start=1):
         score = row["score"]
@@ -234,6 +257,11 @@ def panel_coinbase_top5(s: dict) -> Panel:
         bb_zone = row["bb"]["zone"]
         bb_colors = {"ABOVE": "bright_red", "HIGH": "red", "MID": "yellow", "LOW": "green", "BELOW": "bright_green"}
         bb_icons = {"ABOVE": "↑↑ OB", "HIGH": "↑  HI", "MID": "── MID", "LOW": "↓  LO", "BELOW": "↓↓ OS"}
+        mom = row["momentum"]
+        mom_col = "bright_green" if mom["state"] == "BULL" else "bright_red" if mom["state"] == "BEAR" else "yellow"
+        mom_txt = f"{mom['roc']:+.1f}%"
+        if mom["squeeze"] in ("ON", "FIRED"):
+            mom_txt += f" {mom['squeeze'][:1]}"
 
         tbl.add_row(
             str(idx),
@@ -241,10 +269,13 @@ def panel_coinbase_top5(s: dict) -> Panel:
             SYMBOL_NAME.get(row["sym"], ""),
             Text(f"{score:5.1f}", style=score_color),
             Text(fmt_price(row["price"]), style=price_flash_color(row["sym"], s)),
+            pct_text(row["intraday"]),
             pct_text(row["chg"]),
             Text(f"{row['rsi']}", style="bright_red" if row["rsi"] > 70 else "bright_green" if row["rsi"] < 30 else "yellow"),
             Text(ema_txt, style=ema_col),
             Text(macd_str, style=macd_col),
+            Text(fmt_price(row["vwap"]) if row["vwap"] else "─", style="bright_green" if row["vwap"] and row["price"] >= row["vwap"] else "bright_red" if row["vwap"] else "dim"),
+            Text(mom_txt, style=mom_col),
             Text(bb_icons.get(bb_zone, bb_zone), style=bb_colors.get(bb_zone, "white")),
             Text(f"{row['rvol']:.1f}x", style="bright_green" if row["rvol"] > 2.5 else "green" if row["rvol"] > 1.5 else "dim white"),
             Text(f"{row['atr']:.2f}%" if row["atr"] else "─", style="bright_red" if row["atr"] > 3 else "yellow" if row["atr"] > 1.5 else "dim green"),
@@ -289,7 +320,11 @@ def panel_symbol_detail(s: dict, selected_symbol: str = "BTC") -> Panel:
     ema = analytics["ema"]
     macd = analytics["macd"]
     bb = analytics["bb"]
+    vwap = analytics["vwap"]
+    averages = analytics["averages"]
+    mom = analytics["momentum"]
     sig = analytics["signal"]
+    intra = analytics_cache.intraday_change(sym, s)
 
     grid = Table.grid(padding=(0, 2), expand=True)
     grid.add_column(ratio=1)
@@ -301,6 +336,7 @@ def panel_symbol_detail(s: dict, selected_symbol: str = "BTC") -> Panel:
     market.add_column(justify="right")
     market.add_row("PRECIO", Text(fmt_price(price), style=price_flash_color(sym, s)))
     market.add_row("24H", pct_text(chg))
+    market.add_row("INTRADIA", pct_text(intra))
     market.add_row("HIGH", Text(fmt_price(high), style="bright_white"))
     market.add_row("LOW", Text(fmt_price(low), style="bright_white"))
     market.add_row("VOL", Text(fmt_price(vol), style="bright_white"))
@@ -311,6 +347,10 @@ def panel_symbol_detail(s: dict, selected_symbol: str = "BTC") -> Panel:
     technical.add_column(justify="right")
     technical.add_row("RSI", Text(str(analytics["rsi"]), style="yellow"))
     technical.add_row("EMA", Text(ema["signal"], style="bright_green" if ema["signal"] == "BULL" else "bright_red"))
+    technical.add_row("EMA50", Text(fmt_price(averages["ema"].get(50)) if averages["ema"].get(50) else "-", style="dim white"))
+    technical.add_row("SMA20", Text(fmt_price(averages["sma"].get(20)) if averages["sma"].get(20) else "-", style="dim white"))
+    technical.add_row("SMA50", Text(fmt_price(averages["sma"].get(50)) if averages["sma"].get(50) else "-", style="dim white"))
+    technical.add_row("VWAP", Text(fmt_price(vwap) if vwap else "-", style="bright_green" if vwap and price >= vwap else "bright_red" if vwap else "dim"))
     technical.add_row("MACD", Text(f"{macd['histogram']:+.6f}", style="bright_green" if macd["histogram"] > 0 else "bright_red"))
     technical.add_row("MACD DIR", Text(macd["direction"], style="green" if macd["direction"] == "UP" else "red"))
     technical.add_row("BB", Text(bb["zone"], style="yellow"))
@@ -322,6 +362,9 @@ def panel_symbol_detail(s: dict, selected_symbol: str = "BTC") -> Panel:
     signal.add_column(justify="right")
     signal.add_row("SENAL", Text(sig["signal"], style=sig["color"]))
     signal.add_row("SCORE", Text(str(sig["score"]), style=sig["color"]))
+    signal.add_row("MOM", Text(f"{mom['state']} {mom['roc']:+.2f}%", style="bright_green" if mom["state"] == "BULL" else "bright_red" if mom["state"] == "BEAR" else "yellow"))
+    signal.add_row("DIVERG", Text(mom["divergence"], style="bright_green" if mom["divergence"] == "BULL" else "bright_red" if mom["divergence"] == "BEAR" else "dim"))
+    signal.add_row("SQUEEZE", Text(mom["squeeze"], style="bright_green" if mom["squeeze"] == "FIRED" else "yellow" if mom["squeeze"] == "ON" else "dim"))
     signal.add_row("TICKS", Text(f"{ticks:,}", style="bright_white"))
     signal.add_row("LAST", Text(last_tick, style="dim green"))
     signal.add_row("LAT", Text(f"{latency:.1f}ms" if latency else "-", style="dim green"))
@@ -335,7 +378,7 @@ def panel_symbol_detail(s: dict, selected_symbol: str = "BTC") -> Panel:
     )
 
 
-def panel_quant_legend() -> Panel:
+def panel_quant_legend(s: dict) -> Panel:
     tbl = Table.grid(padding=(0, 1), expand=True)
     tbl.add_column(style="bold bright_green", min_width=10)
     tbl.add_column(style="dim green")
@@ -346,6 +389,11 @@ def panel_quant_legend() -> Panel:
     tbl.add_row("RSI/BB", "premia fuerza no sobrecomprada")
     tbl.add_row("Liquidez", "RVOL alto y spread bajo")
     tbl.add_row("Riesgo", "ATR y spread penalizan")
+    tbl.add_row(Rule(style="dark_green"), "")
+    for idx, row in enumerate(analytics_cache.intraday_rankings(s, 3), start=1):
+        tbl.add_row(f"INTRA {idx}", f"{row['sym']} {row['intraday']:+.2f}%")
+    for idx, row in enumerate(analytics_cache.volume_rankings(s, 3), start=1):
+        tbl.add_row(f"VOL {idx}", f"{row['sym']} {row['rvol']:.1f}x")
     return Panel(tbl, title="[bold bright_green]MODELO[/]", border_style="dark_green", padding=(0, 1))
 
 
@@ -357,6 +405,9 @@ def panel_indicators_legend() -> Panel:
     tbl.add_row("EMA 9/21", "▲ BULL cruce alcista  ✦ cruce reciente")
     tbl.add_row("MACD", "▲/▼ hist. sube/baja  ‰ = ×1000")
     tbl.add_row("BB(20,2σ)", "↑↑ OB sobrecompra  ↓↓ OS sobreventa")
+    tbl.add_row("VWAP/SMA", "precio sobre VWAP/SMA confirma sesgo")
+    tbl.add_row("MOM", "ROC 10 ticks + divergencia RSI/precio")
+    tbl.add_row("SQZ", "ON compresión  FIRED expansión")
     tbl.add_row("ATR%", "volatilidad  > 3% alta  < 1.5% baja")
     tbl.add_row("SIGNAL", "RSI+EMA+MACD+BB → STR LONG/SHORT")
     tbl.add_row("RVOL", "volumen relativo  > 2.5x inusual")
@@ -512,7 +563,7 @@ def build_dashboard(s: dict, view: str = "markets", selected_symbol: str = "BTC"
         layout["legend"].update(panel_indicators_legend())
     elif view == "top5":
         layout["prices"].update(panel_coinbase_top5(s))
-        layout["legend"].update(panel_quant_legend())
+        layout["legend"].update(panel_quant_legend(s))
     else:
         layout["prices"].update(panel_prices(s))
         layout["legend"].update(panel_indicators_legend())

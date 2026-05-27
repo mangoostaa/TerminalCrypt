@@ -51,12 +51,13 @@ class BinanceStream:
             if not sym:
                 return
             price = float(data["c"])
+            open_price = float(data.get("o", price) or price)
             chg24 = float(data["P"])
             high = float(data["h"])
             low = float(data["l"])
             vol = float(data["v"])
             lat_ms = (time.perf_counter() - t0) * 1000
-            self.state.update_tick(sym, price, chg24, high, low, vol, latency_ms=lat_ms)
+            self.state.update_tick(sym, price, chg24, high, low, vol, latency_ms=lat_ms, open_price=open_price)
             self.state.clear_error("binance_msg")
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as e:
             self.state.set_error("binance_msg", e)

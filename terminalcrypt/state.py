@@ -23,6 +23,8 @@ class MarketState:
         self.volume_history: dict = defaultdict(lambda: deque(maxlen=HISTORY_MAX))
         self.high_history: dict = defaultdict(lambda: deque(maxlen=HISTORY_MAX))
         self.low_history: dict = defaultdict(lambda: deque(maxlen=HISTORY_MAX))
+        self.open_history: dict = defaultdict(lambda: deque(maxlen=HISTORY_MAX))
+        self.candle_history: dict = defaultdict(lambda: deque(maxlen=HISTORY_MAX))
 
         self.tick_count: dict = defaultdict(int)
         self.last_tick: dict = {}
@@ -65,6 +67,7 @@ class MarketState:
         bid: float = 0,
         ask: float = 0,
         latency_ms: float = 0,
+        open_price: float | None = None,
     ):
         with self._lock:
             self.prev[sym] = self.prices.get(sym, price)
@@ -81,16 +84,27 @@ class MarketState:
             if bid and ask and ask > 0:
                 self.spread[sym] = (ask - bid) / ask * 100
 
+            tick_ts = datetime.now(timezone.utc).strftime("%H:%M:%S.%f")[:-3]
             self.history[sym].append(price)
             self.volume_history[sym].append(vol)
-            if high:
-                self.high_history[sym].append(high)
-            if low:
-                self.low_history[sym].append(low)
+            candle_open = open_price if open_price and open_price > 0 else self.prev[sym]
+            candle_high = high if high and high > 0 else max(candle_open, price)
+            candle_low = low if low and low > 0 else min(candle_open, price)
+            self.open_history[sym].append(candle_open)
+            self.high_history[sym].append(candle_high)
+            self.low_history[sym].append(candle_low)
+            self.candle_history[sym].append({
+                "open": candle_open,
+                "high": candle_high,
+                "low": candle_low,
+                "close": price,
+                "volume": vol,
+                "ts": tick_ts,
+            })
 
             self.tick_count[sym] += 1
             self.ws_ticks += 1
-            self.last_tick[sym] = datetime.now(timezone.utc).strftime("%H:%M:%S.%f")[:-3]
+            self.last_tick[sym] = tick_ts
             if latency_ms:
                 self.latency_ms[sym] = latency_ms
 
@@ -118,8 +132,10 @@ class MarketState:
                 "spread": dict(self.spread),
                 "history": {k: list(v) for k, v in self.history.items()},
                 "volume_history": {k: list(v) for k, v in self.volume_history.items()},
+                "open_history": {k: list(v) for k, v in self.open_history.items()},
                 "high_history": {k: list(v) for k, v in self.high_history.items()},
                 "low_history": {k: list(v) for k, v in self.low_history.items()},
+                "candle_history": {k: list(v) for k, v in self.candle_history.items()},
                 "tick_count": dict(self.tick_count),
                 "last_tick": dict(self.last_tick),
                 "latency_ms": dict(self.latency_ms),
