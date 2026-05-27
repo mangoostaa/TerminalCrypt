@@ -25,7 +25,7 @@ _prices_last_p = 0.0
 
 
 def _coinbase_rankings(s: dict) -> list[dict]:
-    return analytics_cache.coinbase_rankings(s)
+    return analytics_cache.score_rankings(s, 8)
 
 
 def panel_header(s: dict) -> Panel:
@@ -229,7 +229,7 @@ def panel_coinbase_top5(s: dict) -> Panel:
         tbl.add_row(
             "─",
             "─",
-            Text("Esperando ticks de símbolos Coinbase", style="dim"),
+            Text("Esperando ticks para ranking global", style="dim"),
             *["─"] * 15,
         )
     for idx, row in enumerate(rankings[:5], start=1):
@@ -287,8 +287,8 @@ def panel_coinbase_top5(s: dict) -> Panel:
     return Panel(
         tbl,
         title=(
-            "[bold bright_green]◆ TOP 5 CUANTITATIVO — UNIVERSO COINBASE[/]  "
-            "[dim]score: momentum+EMA+MACD+RSI+BB+RVOL-spread-volatilidad  TAB/I alterna[/]"
+            "[bold bright_green]◆ TOP 5 CUANTITATIVO — GLOBAL[/]  "
+            f"[dim]src:{s['ws_source']}  score: intradía+momentum+EMA+MACD+RSI+BB+VWAP+RVOL-riesgo  TAB/I alterna[/]"
         ),
         border_style="green",
     )
@@ -325,8 +325,11 @@ def panel_symbol_detail(s: dict, selected_symbol: str = "BTC") -> Panel:
     mom = analytics["momentum"]
     sig = analytics["signal"]
     intra = analytics_cache.intraday_change(sym, s)
+    candles_1m = s.get("candles", {}).get(60, {}).get(sym, [])
+    candles_5m = s.get("candles", {}).get(300, {}).get(sym, [])
 
     grid = Table.grid(padding=(0, 2), expand=True)
+    grid.add_column(ratio=1)
     grid.add_column(ratio=1)
     grid.add_column(ratio=1)
     grid.add_column(ratio=1)
@@ -370,7 +373,27 @@ def panel_symbol_detail(s: dict, selected_symbol: str = "BTC") -> Panel:
     signal.add_row("LAT", Text(f"{latency:.1f}ms" if latency else "-", style="dim green"))
     signal.add_row("SPARK", sparkline(hist, 24))
 
-    grid.add_row(market, technical, signal)
+    candles_tbl = Table.grid(padding=(0, 1), expand=True)
+    candles_tbl.add_column(style="dim green")
+    candles_tbl.add_column(justify="right")
+
+    def add_candle_rows(label: str, rows: list) -> None:
+        if not rows:
+            candles_tbl.add_row(label, Text("-", style="dim"))
+            return
+        candle = rows[-1]
+        candles_tbl.add_row(label, Text(candle.get("ts", "-"), style="dim green"))
+        candles_tbl.add_row("  O", Text(fmt_price(candle.get("open", 0)), style="bright_white"))
+        candles_tbl.add_row("  H", Text(fmt_price(candle.get("high", 0)), style="bright_green"))
+        candles_tbl.add_row("  L", Text(fmt_price(candle.get("low", 0)), style="bright_red"))
+        candles_tbl.add_row("  C", Text(fmt_price(candle.get("close", 0)), style=price_flash_color(sym, s)))
+        candles_tbl.add_row("  V", Text(fmt_price(candle.get("volume", 0)), style="dim white"))
+
+    add_candle_rows("VELA 1M", candles_1m)
+    candles_tbl.add_row(Rule(style="dark_green"), "")
+    add_candle_rows("VELA 5M", candles_5m)
+
+    grid.add_row(market, technical, signal, candles_tbl)
     return Panel(
         grid,
         title=f"[bold bright_green]DETALLE - {sym}[/] [dim]{SYMBOL_NAME.get(sym, '')}[/]",
@@ -390,6 +413,8 @@ def panel_quant_legend(s: dict) -> Panel:
     tbl.add_row("Liquidez", "RVOL alto y spread bajo")
     tbl.add_row("Riesgo", "ATR y spread penalizan")
     tbl.add_row(Rule(style="dark_green"), "")
+    for idx, row in enumerate(analytics_cache.score_rankings(s, 3), start=1):
+        tbl.add_row(f"SCORE {idx}", f"{row['sym']} {row['score']:.1f}")
     for idx, row in enumerate(analytics_cache.intraday_rankings(s, 3), start=1):
         tbl.add_row(f"INTRA {idx}", f"{row['sym']} {row['intraday']:+.2f}%")
     for idx, row in enumerate(analytics_cache.volume_rankings(s, 3), start=1):
@@ -530,7 +555,7 @@ def panel_news(s: dict) -> Panel:
 
 def panel_footer(s: dict, view: str = "markets") -> Panel:
     ts = datetime.now(timezone.utc).strftime("%H:%M:%S.%f")[:-3] + " UTC"
-    view_name = "DETALLE" if view == "detail" else "TOP 5 COINBASE" if view == "top5" else "MARKETS"
+    view_name = "DETALLE" if view == "detail" else "TOP 5 GLOBAL" if view == "top5" else "MARKETS"
     txt = (
         f"[dim green]● WS LIVE — {s['ws_source']}[/]  "
         f"[dim]{s['ws_ticks']:,} ticks  │  ~{len(SYMBOLS_ORDERED)} pares  │  "

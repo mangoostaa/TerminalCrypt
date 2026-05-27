@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .config import COINBASE_SYMBOLS
+from .config import COINBASE_SYMBOLS, SYMBOLS_ORDERED
 from .indicators import (
     calculate_atr,
     calculate_bollinger,
@@ -30,12 +30,15 @@ class AnalyticsCache:
         if cached and cached[0] == tick:
             return cached[1]
 
-        hist = s.get("history", {}).get(sym, [])
-        vol_hist = s.get("volume_history", {}).get(sym, [])
-        highs = s.get("high_history", {}).get(sym, [])
-        lows = s.get("low_history", {}).get(sym, [])
-        candles = s.get("candle_history", {}).get(sym, [])
-        vol24 = s.get("vol24", {}).get(sym, 0)
+        tick_hist = s.get("history", {}).get(sym, [])
+        tick_vol_hist = s.get("volume_history", {}).get(sym, [])
+        candles_1m = s.get("candles", {}).get(60, {}).get(sym, [])
+        hist = [float(c["close"]) for c in candles_1m] if len(candles_1m) >= 20 else tick_hist
+        vol_hist = [float(c.get("volume", 0) or 0) for c in candles_1m] if len(candles_1m) >= 10 else tick_vol_hist
+        highs = [float(c["high"]) for c in candles_1m] if len(candles_1m) >= 15 else s.get("high_history", {}).get(sym, [])
+        lows = [float(c["low"]) for c in candles_1m] if len(candles_1m) >= 15 else s.get("low_history", {}).get(sym, [])
+        candles = candles_1m or s.get("candle_history", {}).get(sym, [])
+        current_volume = s.get("volume_delta", {}).get(sym, 0)
 
         rsi = calculate_rsi(hist)
         rsi_series = [calculate_rsi(hist[: i + 1]) for i in range(len(hist))]
@@ -43,7 +46,7 @@ class AnalyticsCache:
         macd = calculate_macd(hist)
         bb = calculate_bollinger(hist)
         atr = calculate_atr(highs, lows, hist)
-        rvol = relative_volume(vol_hist, vol24)
+        rvol = relative_volume(vol_hist, current_volume)
         vwap = calculate_vwap(candles)
         averages = calculate_moving_averages(hist)
         momentum = calculate_momentum(hist, rsi_series)
@@ -51,6 +54,7 @@ class AnalyticsCache:
 
         data = {
             "history": hist,
+            "tick_history": tick_hist,
             "candles": candles,
             "rsi": rsi,
             "ema": ema,
@@ -66,7 +70,7 @@ class AnalyticsCache:
         self._indicators[sym] = (tick, data)
         return data
 
-    def coinbase_score(self, sym: str, s: dict) -> dict:
+    def symbol_score(self, sym: str, s: dict) -> dict:
         tick = s.get("tick_count", {}).get(sym, 0)
         cached = self._scores.get(sym)
         if cached and cached[0] == tick:
@@ -149,13 +153,21 @@ class AnalyticsCache:
         self._scores[sym] = (tick, data)
         return data
 
+    def coinbase_score(self, sym: str, s: dict) -> dict:
+        return self.symbol_score(sym, s)
+
     def coinbase_rankings(self, s: dict) -> list[dict]:
         symbols = sorted(set(COINBASE_SYMBOLS.values()))
-        rows = [self.coinbase_score(sym, s) for sym in symbols if s["prices"].get(sym, 0)]
+        rows = [self.symbol_score(sym, s) for sym in symbols if s["prices"].get(sym, 0)]
         return sorted(rows, key=lambda row: row["score"], reverse=True)
 
+    def score_rankings(self, s: dict, limit: int = 8) -> list[dict]:
+        symbols = [sym for sym in SYMBOLS_ORDERED if s.get("prices", {}).get(sym, 0)]
+        rows = [self.symbol_score(sym, s) for sym in symbols]
+        return sorted(rows, key=lambda row: row["score"], reverse=True)[:limit]
+
     def intraday_change(self, sym: str, s: dict) -> float:
-        candles = s.get("candle_history", {}).get(sym, [])
+        candles = s.get("candles", {}).get(60, {}).get(sym, []) or s.get("candle_history", {}).get(sym, [])
         if candles:
             first_open = float(candles[0].get("open", 0) or 0)
             last_close = float(candles[-1].get("close", 0) or 0)

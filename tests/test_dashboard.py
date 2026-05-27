@@ -13,6 +13,9 @@ class DashboardTests(unittest.TestCase):
         for i in range(40):
             state.update_tick("BTC", float(100 + i), 1.2, float(101 + i), float(99 + i), 1000 + i)
         snap = state.snapshot()
+        self.assertIn("BTC", snap["candles"][60])
+        self.assertEqual(snap["candles"][60]["BTC"][-1]["open"], 100.0)
+        self.assertEqual(snap["candles"][60]["BTC"][-1]["close"], 139.0)
         build_dashboard(snap, "markets", "BTC")
         build_dashboard(snap, "detail", "BTC")
         build_dashboard(snap, "top5", "BTC")
