@@ -27,6 +27,25 @@ class StreamParserTests(unittest.TestCase):
         self.assertEqual(snap["candle_history"]["BTC"][-1]["open"], 100.0)
         self.assertNotIn("binance_msg", snap["errors"])
 
+    def test_binance_miniticker_without_percent_change_updates_state(self):
+        state = MarketState()
+        stream = BinanceStream(state)
+        payload = {
+            "data": {
+                "s": "BTCUSDT",
+                "o": "95.0",
+                "c": "100.0",
+                "h": "110.0",
+                "l": "90.0",
+                "v": "1234.0",
+            }
+        }
+        stream._on_message(None, json.dumps(payload))
+        snap = state.snapshot()
+        self.assertEqual(snap["prices"]["BTC"], 100.0)
+        self.assertAlmostEqual(snap["chg24h"]["BTC"], 5.263157894736842)
+        self.assertNotIn("binance_msg", snap["errors"])
+
     def test_coinbase_message_updates_state(self):
         state = MarketState()
         stream = CoinbaseStream(state)

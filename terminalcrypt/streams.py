@@ -52,7 +52,10 @@ class BinanceStream:
                 return
             price = float(data["c"])
             open_price = float(data.get("o", price) or price)
-            chg24 = float(data["P"])
+            chg24_raw = data.get("P")
+            chg24 = float(chg24_raw) if chg24_raw is not None else (
+                (price - open_price) / open_price * 100 if open_price else 0.0
+            )
             high = float(data["h"])
             low = float(data["l"])
             vol = float(data["v"])
