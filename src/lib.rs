@@ -4,13 +4,13 @@ use rayon::join;
 
 #[cfg(target_arch = "x86")]
 use std::arch::x86::{
-    __m256d, _mm256_add_pd, _mm256_loadu_pd, _mm256_set1_pd, _mm256_setzero_pd,
-    _mm256_storeu_pd, _mm256_sub_pd, _mm256_mul_pd,
+    __m256d, _mm256_add_pd, _mm256_loadu_pd, _mm256_mul_pd, _mm256_set1_pd, _mm256_setzero_pd,
+    _mm256_storeu_pd, _mm256_sub_pd,
 };
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
-    __m256d, _mm256_add_pd, _mm256_loadu_pd, _mm256_set1_pd, _mm256_setzero_pd,
-    _mm256_storeu_pd, _mm256_sub_pd, _mm256_mul_pd,
+    __m256d, _mm256_add_pd, _mm256_loadu_pd, _mm256_mul_pd, _mm256_set1_pd, _mm256_setzero_pd,
+    _mm256_storeu_pd, _mm256_sub_pd,
 };
 
 fn floats(values: &Bound<'_, PyAny>) -> PyResult<Vec<f64>> {
@@ -303,9 +303,17 @@ fn bollinger_raw(prices: &[f64]) -> BollingerRaw {
     let upper = mid + 2.0 * std;
     let lower = mid - 2.0 * std;
     let price = *prices.last().unwrap();
-    let band_range = if upper - lower != 0.0 { upper - lower } else { 0.0001 };
+    let band_range = if upper - lower != 0.0 {
+        upper - lower
+    } else {
+        0.0001
+    };
     let pct_b = (price - lower) / band_range;
-    let bandwidth = if mid != 0.0 { (upper - lower) / mid * 100.0 } else { 0.0 };
+    let bandwidth = if mid != 0.0 {
+        (upper - lower) / mid * 100.0
+    } else {
+        0.0
+    };
     let zone = if price > upper {
         "ABOVE"
     } else if pct_b >= 0.8 {
@@ -347,7 +355,11 @@ fn atr_raw(highs: &[f64], lows: &[f64], closes: &[f64]) -> f64 {
         atr = (atr * 13.0 + hl.max(hcp).max(lcp)) / 14.0;
     }
     let price = closes[closes.len() - 1];
-    if price != 0.0 { round_to(atr / price * 100.0, 3) } else { 0.0 }
+    if price != 0.0 {
+        round_to(atr / price * 100.0, 3)
+    } else {
+        0.0
+    }
 }
 
 fn relative_volume_raw(vol_history: &[f64], current_vol: f64) -> f64 {
@@ -357,7 +369,11 @@ fn relative_volume_raw(vol_history: &[f64], current_vol: f64) -> f64 {
     let start = vol_history.len().saturating_sub(20);
     let sample = &vol_history[start..];
     let avg_vol = sum_f64(sample) / sample.len() as f64;
-    if avg_vol > 0.0 { round_to(current_vol / avg_vol, 2) } else { 1.0 }
+    if avg_vol > 0.0 {
+        round_to(current_vol / avg_vol, 2)
+    } else {
+        1.0
+    }
 }
 
 fn rsi_range_extremes(prices: &[f64], start: usize, end: usize) -> (f64, f64) {
@@ -382,7 +398,11 @@ fn squeeze_state(prices: &[f64]) -> &'static str {
         let mid = sum_f64(sample) / 20.0;
         let variance = sum_sq_diff_f64(sample, mid) / 20.0;
         let std = variance.sqrt();
-        widths[slot] = if mid != 0.0 { (4.0 * std) / mid * 100.0 } else { 0.0 };
+        widths[slot] = if mid != 0.0 {
+            (4.0 * std) / mid * 100.0
+        } else {
+            0.0
+        };
     }
     let recent = widths[19];
     let previous = widths[18];
@@ -428,8 +448,10 @@ fn momentum_raw(prices: &[f64]) -> MomentumRaw {
         let right_high = right.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         let left_low = left.iter().copied().fold(f64::INFINITY, f64::min);
         let right_low = right.iter().copied().fold(f64::INFINITY, f64::min);
-        let (left_rsi, left_rsi_low) = rsi_range_extremes(prices, prices.len() - 30, prices.len() - 15);
-        let (right_rsi, right_rsi_low) = rsi_range_extremes(prices, prices.len() - 15, prices.len());
+        let (left_rsi, left_rsi_low) =
+            rsi_range_extremes(prices, prices.len() - 30, prices.len() - 15);
+        let (right_rsi, right_rsi_low) =
+            rsi_range_extremes(prices, prices.len() - 15, prices.len());
         if right_high > left_high && right_rsi < left_rsi {
             divergence = "BEAR";
         } else if right_low < left_low && right_rsi_low > left_rsi_low {
@@ -640,9 +662,17 @@ fn calculate_bollinger(
     let upper = mid + std_mult * std;
     let lower = mid - std_mult * std;
     let price = *prices.last().unwrap();
-    let band_range = if upper - lower != 0.0 { upper - lower } else { 0.0001 };
+    let band_range = if upper - lower != 0.0 {
+        upper - lower
+    } else {
+        0.0001
+    };
     let pct_b = (price - lower) / band_range;
-    let bandwidth = if mid != 0.0 { (upper - lower) / mid * 100.0 } else { 0.0 };
+    let bandwidth = if mid != 0.0 {
+        (upper - lower) / mid * 100.0
+    } else {
+        0.0
+    };
     let zone = if price > upper {
         "ABOVE"
     } else if pct_b >= 0.8 {
@@ -813,10 +843,17 @@ fn calculate_indicator_bundle(
         || {
             join(
                 || bollinger_raw(&prices),
-                || join(
-                    || join(|| atr_raw(&highs, &lows, &prices), || relative_volume_raw(&vol_history, current_vol)),
-                    || momentum_raw(&prices),
-                ),
+                || {
+                    join(
+                        || {
+                            join(
+                                || atr_raw(&highs, &lows, &prices),
+                                || relative_volume_raw(&vol_history, current_vol),
+                            )
+                        },
+                        || momentum_raw(&prices),
+                    )
+                },
             )
         },
     );
@@ -952,4 +989,104 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(relative_volume, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_indicator_bundle, m)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_approx(actual: f64, expected: f64, tolerance: f64) {
+        assert!(
+            (actual - expected).abs() <= tolerance,
+            "expected {actual} to be within {tolerance} of {expected}"
+        );
+    }
+
+    fn sequence(len: usize) -> Vec<f64> {
+        (1..=len).map(|value| value as f64).collect()
+    }
+
+    #[test]
+    fn rsi_returns_neutral_for_short_series() {
+        assert_eq!(rsi_value(&[100.0, 101.0, 102.0], 14), 50.0);
+    }
+
+    #[test]
+    fn rsi_detects_strong_uptrend() {
+        let prices = sequence(30);
+
+        assert_eq!(rsi_value(&prices, 14), 100.0);
+    }
+
+    #[test]
+    fn ema_values_seed_with_sma_and_keep_input_length() {
+        let values = ema_values(&sequence(10), 3);
+
+        assert_eq!(values.len(), 10);
+        assert_eq!(values[0], None);
+        assert_eq!(values[1], None);
+        assert_approx(values[2].unwrap(), 2.0, 1e-12);
+        assert_approx(values[9].unwrap(), 9.0, 1e-12);
+    }
+
+    #[test]
+    fn ema_cross_marks_clear_uptrend_as_bullish() {
+        let prices = sequence(60);
+        let cross = ema_cross_raw(&prices);
+
+        assert_eq!(cross.signal, "BULL");
+        assert!(!cross.cross);
+        assert!(cross.ema_fast.unwrap() > cross.ema_slow.unwrap());
+    }
+
+    #[test]
+    fn macd_marks_clear_uptrend_as_positive_momentum() {
+        let prices = sequence(80);
+        let macd = macd_raw(&prices);
+
+        assert!(macd.macd_line > 0.0);
+        assert!(macd.signal_line > 0.0);
+        assert_approx(macd.histogram, 0.0, 1e-6);
+        assert_eq!(macd.direction, "DOWN");
+    }
+
+    #[test]
+    fn bollinger_matches_known_twenty_point_window() {
+        let bands = bollinger_raw(&sequence(20));
+
+        assert_approx(bands.middle, 10.5, 1e-6);
+        assert_approx(bands.upper, 22.032563, 1e-6);
+        assert_approx(bands.lower, -1.032563, 1e-6);
+        assert_eq!(bands.pct_b, 0.912);
+        assert_eq!(bands.zone, "HIGH");
+        assert_eq!(bands.bandwidth, 219.67);
+    }
+
+    #[test]
+    fn atr_returns_percent_of_latest_close() {
+        let closes = sequence(20);
+        let highs: Vec<f64> = closes.iter().map(|price| price + 1.0).collect();
+        let lows: Vec<f64> = closes.iter().map(|price| price - 1.0).collect();
+
+        assert_eq!(atr_raw(&highs, &lows, &closes), 10.0);
+    }
+
+    #[test]
+    fn relative_volume_uses_recent_average() {
+        let history = sequence(20);
+
+        assert_eq!(relative_volume_raw(&history, 21.0), 2.0);
+    }
+
+    #[test]
+    fn momentum_classifies_ten_period_rate_of_change() {
+        let bullish = momentum_raw(&sequence(30));
+        let bearish_prices: Vec<f64> = (1..=30).rev().map(|value| value as f64).collect();
+        let bearish = momentum_raw(&bearish_prices);
+
+        assert_eq!(bullish.state, "BULL");
+        assert!(bullish.roc > 0.0);
+        assert_eq!(bearish.state, "BEAR");
+        assert!(bearish.roc < 0.0);
+    }
 }
