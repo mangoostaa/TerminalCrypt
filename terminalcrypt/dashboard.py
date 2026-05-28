@@ -73,6 +73,37 @@ def panel_ticker(s: dict) -> Panel:
     return Panel(txt, border_style="dark_green", padding=(0, 1))
 
 
+def panel_alerts(s: dict) -> Panel:
+    alerts = s.get("alerts", {})
+    triggered = s.get("triggered", [])
+    grid = Table.grid(expand=True, padding=(0, 2))
+    grid.add_column(ratio=1)
+    grid.add_column(ratio=1)
+
+    active_parts = []
+    for sym, target in sorted(alerts.items()):
+        price = s["prices"].get(sym, 0)
+        distance = ""
+        if price and target:
+            distance_pct = (target - price) / price * 100
+            distance = f" ({distance_pct:+.2f}%)"
+        active_parts.append(f"{sym} >= {fmt_price(target).strip()}{distance}")
+
+    recent_parts = [f"{ts} {msg}" for ts, msg in triggered[-3:]]
+    active_text = "  |  ".join(active_parts) if active_parts else "Sin alertas configuradas"
+    recent_text = "  |  ".join(recent_parts) if recent_parts else "Sin disparos recientes"
+    active_style = "bold yellow" if active_parts else "dim green"
+    recent_style = "bold bright_red" if recent_parts else "dim green"
+
+    grid.add_row(
+        Text(active_text[:110], style=active_style),
+        Text(recent_text[:90], style=recent_style, justify="right"),
+    )
+    border = "bright_red" if recent_parts else "yellow" if active_parts else "dark_green"
+    title = "[bold yellow]ALERTAS ACTIVAS[/]" if active_parts else "[bold green]ALERTAS[/]"
+    return Panel(grid, title=title, border_style=border, padding=(0, 1))
+
+
 def panel_prices(s: dict) -> Panel:
     global _prices_page, _prices_last_p
     now = time.monotonic()
@@ -570,6 +601,7 @@ def build_dashboard(s: dict, view: str = "markets", selected_symbol: str = "BTC"
     layout.split_column(
         Layout(name="header", size=3),
         Layout(name="ticker", size=3),
+        Layout(name="alerts", size=3),
         Layout(name="body", ratio=1),
         Layout(name="news", size=12),
         Layout(name="footer", size=3),
@@ -583,6 +615,7 @@ def build_dashboard(s: dict, view: str = "markets", selected_symbol: str = "BTC"
     )
     layout["header"].update(panel_header(s))
     layout["ticker"].update(panel_ticker(s))
+    layout["alerts"].update(panel_alerts(s))
     if view == "detail":
         layout["prices"].update(panel_symbol_detail(s, selected_symbol))
         layout["legend"].update(panel_indicators_legend())
