@@ -4,6 +4,8 @@ Real-time cryptocurrency terminal built for the command line.
 
 AZ TERMINAL streams live market data from multiple exchanges using pure WebSockets (zero polling), calculates technical indicators in real time, and renders a professional TUI dashboard directly in the terminal.
 
+![AZ Terminal Dashboard](assets/ss1.png)
+
 ---
 
 ## Preview
@@ -53,6 +55,8 @@ Built-in indicators calculated live:
 
 ---
 
+![AZ Terminal Detail View](assets/ss2.png)
+
 # Dashboard
 
 Professional terminal dashboard using Rich:
@@ -68,6 +72,8 @@ Professional terminal dashboard using Rich:
 - Keyboard view switcher
 - Coinbase Top 5 quantitative ranking
 - Telegram surge alerts
+
+![AZ Terminal Top 5 Ranking](assets/ss3.png)
 
 ---
 
