@@ -1,5 +1,6 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
+use rayon::join;
 
 #[cfg(target_arch = "x86")]
 use std::arch::x86::{
@@ -95,11 +96,7 @@ fn latest_sma_value(prices: &[f64], period: usize) -> Option<f64> {
 }
 
 fn latest_ema_value(prices: &[f64], period: usize) -> Option<f64> {
-    ema_values(prices, period)
-        .into_iter()
-        .flatten()
-        .last()
-        .map(|v| round_to(v, 6))
+    ema_last_two(prices, period).1.map(|v| round_to(v, 6))
 }
 
 fn ema_values(prices: &[f64], period: usize) -> Vec<Option<f64>> {
@@ -148,12 +145,269 @@ fn rsi_value(prices: &[f64], period: usize) -> f64 {
     round_to(100.0 - (100.0 / (1.0 + rs)), 1)
 }
 
-fn momentum_value(prices: &[f64], period: usize) -> (f64, &'static str, &'static str, &'static str) {
-    if prices.len() <= period {
-        return (0.0, "NEUTRAL", "-", "-");
+struct EmaCrossRaw {
+    signal: &'static str,
+    ema_fast: Option<f64>,
+    ema_slow: Option<f64>,
+    cross: bool,
+}
+
+struct MacdRaw {
+    macd_line: f64,
+    signal_line: f64,
+    histogram: f64,
+    direction: &'static str,
+}
+
+struct BollingerRaw {
+    upper: f64,
+    middle: f64,
+    lower: f64,
+    pct_b: f64,
+    zone: &'static str,
+    bandwidth: f64,
+}
+
+struct MomentumRaw {
+    roc: f64,
+    state: &'static str,
+    divergence: &'static str,
+    squeeze: &'static str,
+}
+
+fn ema_last_two(prices: &[f64], period: usize) -> (Option<f64>, Option<f64>) {
+    if period == 0 || prices.len() < period {
+        return (None, None);
+    }
+    let k = 2.0 / (period as f64 + 1.0);
+    let mut current = sum_f64(&prices[..period]) / period as f64;
+    let mut previous = None;
+    for price in &prices[period..] {
+        previous = Some(current);
+        current = price * k + current * (1.0 - k);
+    }
+    (previous, Some(current))
+}
+
+fn ema_cross_raw(prices: &[f64]) -> EmaCrossRaw {
+    if prices.len() < 22 {
+        return EmaCrossRaw {
+            signal: "NEUTRAL",
+            ema_fast: None,
+            ema_slow: None,
+            cross: false,
+        };
+    }
+    let (prev_f, cur_f) = ema_last_two(prices, 9);
+    let (prev_s, cur_s) = ema_last_two(prices, 21);
+    match (prev_f, cur_f, prev_s, cur_s) {
+        (Some(prev_f), Some(cur_f), Some(prev_s), Some(cur_s)) => {
+            let signal = if cur_f > cur_s { "BULL" } else { "BEAR" };
+            let cross = (prev_f <= prev_s && cur_f > cur_s) || (prev_f >= prev_s && cur_f < cur_s);
+            EmaCrossRaw {
+                signal,
+                ema_fast: Some(cur_f),
+                ema_slow: Some(cur_s),
+                cross,
+            }
+        }
+        _ => EmaCrossRaw {
+            signal: "NEUTRAL",
+            ema_fast: None,
+            ema_slow: None,
+            cross: false,
+        },
+    }
+}
+
+fn macd_raw(prices: &[f64]) -> MacdRaw {
+    if prices.len() < 35 {
+        return MacdRaw {
+            macd_line: 0.0,
+            signal_line: 0.0,
+            histogram: 0.0,
+            direction: "-",
+        };
     }
 
-    let prev = prices[prices.len() - period - 1];
+    let fast = 12;
+    let slow = 26;
+    let signal = 9;
+    let fast_k = 2.0 / (fast as f64 + 1.0);
+    let slow_k = 2.0 / (slow as f64 + 1.0);
+    let signal_k = 2.0 / (signal as f64 + 1.0);
+    let mut fast_ema = sum_f64(&prices[..fast]) / fast as f64;
+    let mut slow_ema = sum_f64(&prices[..slow]) / slow as f64;
+    let mut macd_count = 0_usize;
+    let mut signal_seed = 0.0;
+    let mut signal_ema = 0.0;
+    let mut prev_hist = 0.0;
+    let mut hist = 0.0;
+    let mut last_macd = 0.0;
+
+    for (i, price) in prices.iter().enumerate() {
+        if i >= fast {
+            fast_ema = price * fast_k + fast_ema * (1.0 - fast_k);
+        }
+        if i >= slow {
+            slow_ema = price * slow_k + slow_ema * (1.0 - slow_k);
+            last_macd = fast_ema - slow_ema;
+            macd_count += 1;
+            if macd_count <= signal {
+                signal_seed += last_macd;
+                if macd_count == signal {
+                    signal_ema = signal_seed / signal as f64;
+                    hist = last_macd - signal_ema;
+                    prev_hist = hist;
+                }
+                continue;
+            }
+            signal_ema = last_macd * signal_k + signal_ema * (1.0 - signal_k);
+            prev_hist = hist;
+            hist = last_macd - signal_ema;
+        }
+    }
+
+    if macd_count < signal {
+        return MacdRaw {
+            macd_line: 0.0,
+            signal_line: 0.0,
+            histogram: 0.0,
+            direction: "-",
+        };
+    }
+
+    MacdRaw {
+        macd_line: round_to(last_macd, 6),
+        signal_line: round_to(signal_ema, 6),
+        histogram: round_to(hist, 6),
+        direction: if hist > prev_hist { "UP" } else { "DOWN" },
+    }
+}
+
+fn bollinger_raw(prices: &[f64]) -> BollingerRaw {
+    if prices.len() < 20 {
+        return BollingerRaw {
+            upper: 0.0,
+            middle: 0.0,
+            lower: 0.0,
+            pct_b: 0.5,
+            zone: "MID",
+            bandwidth: 0.0,
+        };
+    }
+    let sample = &prices[prices.len() - 20..];
+    let mid = sum_f64(sample) / 20.0;
+    let variance = sum_sq_diff_f64(sample, mid) / 20.0;
+    let std = variance.sqrt();
+    let upper = mid + 2.0 * std;
+    let lower = mid - 2.0 * std;
+    let price = *prices.last().unwrap();
+    let band_range = if upper - lower != 0.0 { upper - lower } else { 0.0001 };
+    let pct_b = (price - lower) / band_range;
+    let bandwidth = if mid != 0.0 { (upper - lower) / mid * 100.0 } else { 0.0 };
+    let zone = if price > upper {
+        "ABOVE"
+    } else if pct_b >= 0.8 {
+        "HIGH"
+    } else if pct_b <= 0.2 {
+        "LOW"
+    } else if price < lower {
+        "BELOW"
+    } else {
+        "MID"
+    };
+    BollingerRaw {
+        upper: round_to(upper, 6),
+        middle: round_to(mid, 6),
+        lower: round_to(lower, 6),
+        pct_b: round_to(pct_b, 3),
+        zone,
+        bandwidth: round_to(bandwidth, 2),
+    }
+}
+
+fn atr_raw(highs: &[f64], lows: &[f64], closes: &[f64]) -> f64 {
+    let n = highs.len().min(lows.len()).min(closes.len());
+    if n < 15 {
+        return 0.0;
+    }
+    let mut atr = 0.0;
+    for i in 1..=14 {
+        let hl = highs[i] - lows[i];
+        let hcp = (highs[i] - closes[i - 1]).abs();
+        let lcp = (lows[i] - closes[i - 1]).abs();
+        atr += hl.max(hcp).max(lcp);
+    }
+    atr /= 14.0;
+    for i in 15..n {
+        let hl = highs[i] - lows[i];
+        let hcp = (highs[i] - closes[i - 1]).abs();
+        let lcp = (lows[i] - closes[i - 1]).abs();
+        atr = (atr * 13.0 + hl.max(hcp).max(lcp)) / 14.0;
+    }
+    let price = closes[closes.len() - 1];
+    if price != 0.0 { round_to(atr / price * 100.0, 3) } else { 0.0 }
+}
+
+fn relative_volume_raw(vol_history: &[f64], current_vol: f64) -> f64 {
+    if vol_history.len() < 10 || current_vol <= 0.0 {
+        return 1.0;
+    }
+    let start = vol_history.len().saturating_sub(20);
+    let sample = &vol_history[start..];
+    let avg_vol = sum_f64(sample) / sample.len() as f64;
+    if avg_vol > 0.0 { round_to(current_vol / avg_vol, 2) } else { 1.0 }
+}
+
+fn rsi_range_extremes(prices: &[f64], start: usize, end: usize) -> (f64, f64) {
+    let mut high = f64::NEG_INFINITY;
+    let mut low = f64::INFINITY;
+    for idx in start..end {
+        let value = rsi_value(&prices[..=idx], 14);
+        high = high.max(value);
+        low = low.min(value);
+    }
+    (high, low)
+}
+
+fn squeeze_state(prices: &[f64]) -> &'static str {
+    if prices.len() < 39 {
+        return "-";
+    }
+    let mut widths = [0.0_f64; 20];
+    let first_window_end = prices.len() - 19;
+    for (slot, end) in (first_window_end..=prices.len()).enumerate() {
+        let sample = &prices[end - 20..end];
+        let mid = sum_f64(sample) / 20.0;
+        let variance = sum_sq_diff_f64(sample, mid) / 20.0;
+        let std = variance.sqrt();
+        widths[slot] = if mid != 0.0 { (4.0 * std) / mid * 100.0 } else { 0.0 };
+    }
+    let recent = widths[19];
+    let previous = widths[18];
+    let mut baseline = widths;
+    baseline.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let threshold = baseline[3];
+    if recent <= threshold {
+        "ON"
+    } else if previous <= threshold && threshold < recent {
+        "FIRED"
+    } else {
+        "-"
+    }
+}
+
+fn momentum_raw(prices: &[f64]) -> MomentumRaw {
+    if prices.len() <= 10 {
+        return MomentumRaw {
+            roc: 0.0,
+            state: "NEUTRAL",
+            divergence: "-",
+            squeeze: "-",
+        };
+    }
+    let prev = prices[prices.len() - 11];
     let roc = if prev != 0.0 {
         (prices[prices.len() - 1] - prev) / prev * 100.0
     } else {
@@ -166,7 +420,6 @@ fn momentum_value(prices: &[f64], period: usize) -> (f64, &'static str, &'static
     } else {
         "NEUTRAL"
     };
-
     let mut divergence = "-";
     if prices.len() >= 30 {
         let left = &prices[prices.len() - 30..prices.len() - 15];
@@ -175,75 +428,20 @@ fn momentum_value(prices: &[f64], period: usize) -> (f64, &'static str, &'static
         let right_high = right.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         let left_low = left.iter().copied().fold(f64::INFINITY, f64::min);
         let right_low = right.iter().copied().fold(f64::INFINITY, f64::min);
-
-        let rsi_series = rsi_series_values(prices, 14);
-        let left_rsi = rsi_series[prices.len() - 30..prices.len() - 15]
-            .iter()
-            .copied()
-            .fold(f64::NEG_INFINITY, f64::max);
-        let right_rsi = rsi_series[prices.len() - 15..]
-            .iter()
-            .copied()
-            .fold(f64::NEG_INFINITY, f64::max);
-        let left_rsi_low = rsi_series[prices.len() - 30..prices.len() - 15]
-            .iter()
-            .copied()
-            .fold(f64::INFINITY, f64::min);
-        let right_rsi_low = rsi_series[prices.len() - 15..]
-            .iter()
-            .copied()
-            .fold(f64::INFINITY, f64::min);
-
+        let (left_rsi, left_rsi_low) = rsi_range_extremes(prices, prices.len() - 30, prices.len() - 15);
+        let (right_rsi, right_rsi_low) = rsi_range_extremes(prices, prices.len() - 15, prices.len());
         if right_high > left_high && right_rsi < left_rsi {
             divergence = "BEAR";
         } else if right_low < left_low && right_rsi_low > left_rsi_low {
             divergence = "BULL";
         }
     }
-
-    let widths = bollinger_bandwidth_values(prices, 20, 2.0);
-    let mut squeeze = "-";
-    if widths.len() >= 20 {
-        let recent = *widths.last().unwrap();
-        let mut baseline = widths[widths.len() - 20..].to_vec();
-        baseline.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let idx = ((baseline.len() as f64 * 0.2) as usize).saturating_sub(1);
-        let threshold = baseline[idx];
-        if recent <= threshold {
-            squeeze = "ON";
-        } else if widths.len() >= 2 && widths[widths.len() - 2] <= threshold && threshold < recent {
-            squeeze = "FIRED";
-        }
+    MomentumRaw {
+        roc: round_to(roc, 2),
+        state,
+        divergence,
+        squeeze: squeeze_state(prices),
     }
-
-    (round_to(roc, 2), state, divergence, squeeze)
-}
-
-fn rsi_series_values(prices: &[f64], period: usize) -> Vec<f64> {
-    let mut out = Vec::with_capacity(prices.len());
-    for end in 1..=prices.len() {
-        out.push(rsi_value(&prices[..end], period));
-    }
-    out
-}
-
-fn bollinger_bandwidth_values(prices: &[f64], period: usize, std_mult: f64) -> Vec<f64> {
-    let mut values = Vec::new();
-    if period == 0 || prices.len() < period {
-        return values;
-    }
-    for i in period..=prices.len() {
-        let sample = &prices[i - period..i];
-        let mid = sum_f64(sample) / period as f64;
-        let variance = sum_sq_diff_f64(sample, mid) / period as f64;
-        let std = variance.sqrt();
-        values.push(if mid != 0.0 {
-            (std_mult * 2.0 * std) / mid * 100.0
-        } else {
-            0.0
-        });
-    }
-    values
 }
 
 #[pyfunction]
@@ -279,6 +477,21 @@ fn calculate_ema_cross(
 ) -> PyResult<Py<PyAny>> {
     let prices = floats(prices)?;
     let out = PyDict::new(py);
+
+    if fast == 9 && slow == 21 {
+        let raw = ema_cross_raw(&prices);
+        out.set_item("signal", raw.signal)?;
+        match raw.ema_fast {
+            Some(v) => out.set_item("ema_fast", v)?,
+            None => out.set_item("ema_fast", py.None())?,
+        }
+        match raw.ema_slow {
+            Some(v) => out.set_item("ema_slow", v)?,
+            None => out.set_item("ema_slow", py.None())?,
+        }
+        out.set_item("cross", raw.cross)?;
+        return Ok(out.into());
+    }
 
     if prices.len() < slow + 1 || fast == 0 || slow == 0 {
         out.set_item("signal", "NEUTRAL")?;
@@ -327,6 +540,15 @@ fn calculate_macd(
 ) -> PyResult<Py<PyAny>> {
     let prices = floats(prices)?;
     let out = PyDict::new(py);
+
+    if fast == 12 && slow == 26 && signal == 9 {
+        let raw = macd_raw(&prices);
+        out.set_item("macd_line", raw.macd_line)?;
+        out.set_item("signal_line", raw.signal_line)?;
+        out.set_item("histogram", raw.histogram)?;
+        out.set_item("direction", raw.direction)?;
+        return Ok(out.into());
+    }
 
     if prices.len() < slow + signal || fast == 0 || slow == 0 || signal == 0 {
         out.set_item("macd_line", 0.0)?;
@@ -390,6 +612,17 @@ fn calculate_bollinger(
     let prices = floats(prices)?;
     let out = PyDict::new(py);
 
+    if period == 20 && std_mult == 2.0 {
+        let raw = bollinger_raw(&prices);
+        out.set_item("upper", raw.upper)?;
+        out.set_item("middle", raw.middle)?;
+        out.set_item("lower", raw.lower)?;
+        out.set_item("pct_b", raw.pct_b)?;
+        out.set_item("zone", raw.zone)?;
+        out.set_item("bandwidth", raw.bandwidth)?;
+        return Ok(out.into());
+    }
+
     if prices.len() < period || period == 0 {
         out.set_item("upper", 0.0)?;
         out.set_item("middle", 0.0)?;
@@ -442,6 +675,9 @@ fn calculate_atr(
     let highs = floats(highs)?;
     let lows = floats(lows)?;
     let closes = floats(closes)?;
+    if period == 14 {
+        return Ok(atr_raw(&highs, &lows, &closes));
+    }
     let n = highs.len().min(lows.len()).min(closes.len());
 
     if n < period + 1 || period == 0 {
@@ -554,18 +790,7 @@ fn calculate_signal(
 #[pyfunction]
 fn relative_volume(vol_history: &Bound<'_, PyAny>, current_vol: f64) -> PyResult<f64> {
     let vol_history = floats(vol_history)?;
-    if vol_history.len() < 10 || current_vol <= 0.0 {
-        return Ok(1.0);
-    }
-
-    let start = vol_history.len().saturating_sub(20);
-    let sample = &vol_history[start..];
-    let avg_vol = sum_f64(sample) / sample.len() as f64;
-    Ok(if avg_vol > 0.0 {
-        round_to(current_vol / avg_vol, 2)
-    } else {
-        1.0
-    })
+    Ok(relative_volume_raw(&vol_history, current_vol))
 }
 
 #[pyfunction]
@@ -583,142 +808,44 @@ fn calculate_indicator_bundle(
     let vol_history = floats(vol_history)?;
 
     let rsi = rsi_value(&prices, 14);
+    let ((ema_raw, macd_raw), (bb_raw, ((atr, rvol), momentum_raw))) = join(
+        || join(|| ema_cross_raw(&prices), || macd_raw(&prices)),
+        || {
+            join(
+                || bollinger_raw(&prices),
+                || join(
+                    || join(|| atr_raw(&highs, &lows, &prices), || relative_volume_raw(&vol_history, current_vol)),
+                    || momentum_raw(&prices),
+                ),
+            )
+        },
+    );
 
     let ema = PyDict::new(py);
-    if prices.len() < 22 {
-        ema.set_item("signal", "NEUTRAL")?;
-        ema.set_item("ema_fast", py.None())?;
-        ema.set_item("ema_slow", py.None())?;
-        ema.set_item("cross", false)?;
-    } else {
-        let fast_ema = ema_values(&prices, 9);
-        let slow_ema = ema_values(&prices, 21);
-        let pairs: Vec<(f64, f64)> = fast_ema
-            .iter()
-            .zip(slow_ema.iter())
-            .filter_map(|(f, s)| Some(((*f)?, (*s)?)))
-            .collect();
-        if pairs.len() < 2 {
-            ema.set_item("signal", "NEUTRAL")?;
-            ema.set_item("ema_fast", py.None())?;
-            ema.set_item("ema_slow", py.None())?;
-            ema.set_item("cross", false)?;
-        } else {
-            let (cur_f, cur_s) = pairs[pairs.len() - 1];
-            let (prev_f, prev_s) = pairs[pairs.len() - 2];
-            let signal = if cur_f > cur_s { "BULL" } else { "BEAR" };
-            let cross = (prev_f <= prev_s && cur_f > cur_s) || (prev_f >= prev_s && cur_f < cur_s);
-            ema.set_item("signal", signal)?;
-            ema.set_item("ema_fast", cur_f)?;
-            ema.set_item("ema_slow", cur_s)?;
-            ema.set_item("cross", cross)?;
-        }
+    ema.set_item("signal", ema_raw.signal)?;
+    match ema_raw.ema_fast {
+        Some(v) => ema.set_item("ema_fast", v)?,
+        None => ema.set_item("ema_fast", py.None())?,
     }
+    match ema_raw.ema_slow {
+        Some(v) => ema.set_item("ema_slow", v)?,
+        None => ema.set_item("ema_slow", py.None())?,
+    }
+    ema.set_item("cross", ema_raw.cross)?;
 
     let macd = PyDict::new(py);
-    if prices.len() < 35 {
-        macd.set_item("macd_line", 0.0)?;
-        macd.set_item("signal_line", 0.0)?;
-        macd.set_item("histogram", 0.0)?;
-        macd.set_item("direction", "-")?;
-    } else {
-        let fast_ema = ema_values(&prices, 12);
-        let slow_ema = ema_values(&prices, 26);
-        let macd_line: Vec<f64> = fast_ema
-            .iter()
-            .zip(slow_ema.iter())
-            .filter_map(|(f, s)| Some((*f)? - (*s)?))
-            .collect();
-        let sig_line = ema_values(&macd_line, 9);
-        let sig_vals: Vec<f64> = sig_line.into_iter().flatten().collect();
-        if macd_line.is_empty() || sig_vals.is_empty() {
-            macd.set_item("macd_line", 0.0)?;
-            macd.set_item("signal_line", 0.0)?;
-            macd.set_item("histogram", 0.0)?;
-            macd.set_item("direction", "-")?;
-        } else {
-            let ml = *macd_line.last().unwrap();
-            let sl = *sig_vals.last().unwrap();
-            let hist = ml - sl;
-            let hist_prev = if macd_line.len() >= 2 && sig_vals.len() >= 2 {
-                macd_line[macd_line.len() - 2] - sig_vals[sig_vals.len() - 2]
-            } else {
-                hist
-            };
-            macd.set_item("macd_line", round_to(ml, 6))?;
-            macd.set_item("signal_line", round_to(sl, 6))?;
-            macd.set_item("histogram", round_to(hist, 6))?;
-            macd.set_item("direction", if hist > hist_prev { "UP" } else { "DOWN" })?;
-        }
-    }
+    macd.set_item("macd_line", macd_raw.macd_line)?;
+    macd.set_item("signal_line", macd_raw.signal_line)?;
+    macd.set_item("histogram", macd_raw.histogram)?;
+    macd.set_item("direction", macd_raw.direction)?;
 
     let bb = PyDict::new(py);
-    if prices.len() < 20 {
-        bb.set_item("upper", 0.0)?;
-        bb.set_item("middle", 0.0)?;
-        bb.set_item("lower", 0.0)?;
-        bb.set_item("pct_b", 0.5)?;
-        bb.set_item("zone", "MID")?;
-        bb.set_item("bandwidth", 0.0)?;
-    } else {
-        let sample = &prices[prices.len() - 20..];
-        let mid = sum_f64(sample) / 20.0;
-        let variance = sum_sq_diff_f64(sample, mid) / 20.0;
-        let std = variance.sqrt();
-        let upper = mid + 2.0 * std;
-        let lower = mid - 2.0 * std;
-        let price = *prices.last().unwrap();
-        let band_range = if upper - lower != 0.0 { upper - lower } else { 0.0001 };
-        let pct_b = (price - lower) / band_range;
-        let bandwidth = if mid != 0.0 { (upper - lower) / mid * 100.0 } else { 0.0 };
-        let zone = if price > upper {
-            "ABOVE"
-        } else if pct_b >= 0.8 {
-            "HIGH"
-        } else if pct_b <= 0.2 {
-            "LOW"
-        } else if price < lower {
-            "BELOW"
-        } else {
-            "MID"
-        };
-        bb.set_item("upper", round_to(upper, 6))?;
-        bb.set_item("middle", round_to(mid, 6))?;
-        bb.set_item("lower", round_to(lower, 6))?;
-        bb.set_item("pct_b", round_to(pct_b, 3))?;
-        bb.set_item("zone", zone)?;
-        bb.set_item("bandwidth", round_to(bandwidth, 2))?;
-    }
-
-    let n = highs.len().min(lows.len()).min(prices.len());
-    let atr = if n < 15 {
-        0.0
-    } else {
-        let mut trs = Vec::with_capacity(n - 1);
-        for i in 1..n {
-            let hl = highs[i] - lows[i];
-            let hcp = (highs[i] - prices[i - 1]).abs();
-            let lcp = (lows[i] - prices[i - 1]).abs();
-            trs.push(hl.max(hcp).max(lcp));
-        }
-        let mut atr = sum_f64(&trs[..14]) / 14.0;
-        for tr in &trs[14..] {
-            atr = (atr * 13.0 + tr) / 14.0;
-        }
-        let price = *prices.last().unwrap_or(&0.0);
-        if price != 0.0 { round_to(atr / price * 100.0, 3) } else { 0.0 }
-    };
-
-    let rvol = if vol_history.len() < 10 || current_vol <= 0.0 {
-        1.0
-    } else {
-        let start = vol_history.len().saturating_sub(20);
-        let sample = &vol_history[start..];
-        let avg_vol = sum_f64(sample) / sample.len() as f64;
-        if avg_vol > 0.0 { round_to(current_vol / avg_vol, 2) } else { 1.0 }
-    };
-
-    let (roc, momentum_state, divergence, squeeze) = momentum_value(&prices, 10);
+    bb.set_item("upper", bb_raw.upper)?;
+    bb.set_item("middle", bb_raw.middle)?;
+    bb.set_item("lower", bb_raw.lower)?;
+    bb.set_item("pct_b", bb_raw.pct_b)?;
+    bb.set_item("zone", bb_raw.zone)?;
+    bb.set_item("bandwidth", bb_raw.bandwidth)?;
 
     let averages = PyDict::new(py);
     let sma = PyDict::new(py);
@@ -741,10 +868,10 @@ fn calculate_indicator_bundle(
     averages.set_item("ema", ema_avg)?;
 
     let momentum = PyDict::new(py);
-    momentum.set_item("roc", roc)?;
-    momentum.set_item("state", momentum_state)?;
-    momentum.set_item("divergence", divergence)?;
-    momentum.set_item("squeeze", squeeze)?;
+    momentum.set_item("roc", momentum_raw.roc)?;
+    momentum.set_item("state", momentum_raw.state)?;
+    momentum.set_item("divergence", momentum_raw.divergence)?;
+    momentum.set_item("squeeze", momentum_raw.squeeze)?;
 
     let mut score = 0;
     if rsi < 30.0 {
@@ -752,56 +879,36 @@ fn calculate_indicator_bundle(
     } else if rsi > 70.0 {
         score -= 1;
     }
-    let ema_signal = ema
-        .get_item("signal")?
-        .and_then(|v| v.extract::<String>().ok())
-        .unwrap_or_else(|| "NEUTRAL".to_string());
-    if ema_signal == "BULL" {
+    if ema_raw.signal == "BULL" {
         score += 1;
-    } else if ema_signal == "BEAR" {
+    } else if ema_raw.signal == "BEAR" {
         score -= 1;
     }
-    let cross = ema
-        .get_item("cross")?
-        .and_then(|v| v.extract::<bool>().ok())
-        .unwrap_or(false);
-    if cross {
-        score += if ema_signal == "BULL" { 1 } else { -1 };
+    if ema_raw.cross {
+        score += if ema_raw.signal == "BULL" { 1 } else { -1 };
     }
-    let hist = macd
-        .get_item("histogram")?
-        .and_then(|v| v.extract::<f64>().ok())
-        .unwrap_or(0.0);
-    let direction = macd
-        .get_item("direction")?
-        .and_then(|v| v.extract::<String>().ok())
-        .unwrap_or_else(|| "-".to_string());
-    if hist > 0.0 && direction == "UP" {
+    if macd_raw.histogram > 0.0 && macd_raw.direction == "UP" {
         score += 1;
-    } else if hist < 0.0 && direction == "DOWN" {
+    } else if macd_raw.histogram < 0.0 && macd_raw.direction == "DOWN" {
         score -= 1;
     }
-    let zone = bb
-        .get_item("zone")?
-        .and_then(|v| v.extract::<String>().ok())
-        .unwrap_or_else(|| "MID".to_string());
-    if zone == "LOW" || zone == "BELOW" {
+    if bb_raw.zone == "LOW" || bb_raw.zone == "BELOW" {
         score += 1;
-    } else if zone == "HIGH" || zone == "ABOVE" {
+    } else if bb_raw.zone == "HIGH" || bb_raw.zone == "ABOVE" {
         score -= 1;
     }
-    if momentum_state == "BULL" {
+    if momentum_raw.state == "BULL" {
         score += 1;
-    } else if momentum_state == "BEAR" {
+    } else if momentum_raw.state == "BEAR" {
         score -= 1;
     }
-    if divergence == "BULL" {
+    if momentum_raw.divergence == "BULL" {
         score += 1;
-    } else if divergence == "BEAR" {
+    } else if momentum_raw.divergence == "BEAR" {
         score -= 1;
     }
-    if squeeze == "FIRED" {
-        score += if hist >= 0.0 { 1 } else { -1 };
+    if momentum_raw.squeeze == "FIRED" {
+        score += if macd_raw.histogram >= 0.0 { 1 } else { -1 };
     }
     let (sig, col, icon) = if score >= 3 {
         ("STR LONG", "bold bright_green", "OO")
