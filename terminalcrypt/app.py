@@ -15,6 +15,7 @@ from .notifications import start_surge_notifications
 from .rest import start_rest
 from .settings import AppSettings
 from .state import MarketState
+from .storage import SQLiteTickStore
 from .streams import BinanceStream, CoinbaseStream, KrakenStream
 
 log = logging.getLogger(__name__)
@@ -23,7 +24,11 @@ log = logging.getLogger(__name__)
 class CryptexApp:
     def __init__(self, settings: AppSettings | None = None):
         self.settings = settings or AppSettings()
-        self.state = MarketState()
+        self._tick_store = None
+        if self.settings.sqlite_enabled:
+            self._tick_store = SQLiteTickStore(self.settings.sqlite_path, self.settings.sqlite_batch_size)
+            self._tick_store.start()
+        self.state = MarketState(tick_recorder=self._tick_store)
         self._stream = None
         self._notifier = None
         self.console = Console()
@@ -111,6 +116,8 @@ class CryptexApp:
                 self._stream.stop()
             if self._notifier:
                 self._notifier.stop()
+            if self._tick_store:
+                self._tick_store.stop()
             sys.exit(0)
 
         signal.signal(signal.SIGINT, shutdown)
@@ -130,6 +137,9 @@ class CryptexApp:
         except Exception as e:
             log.exception("live dashboard crashed")
             self.console.print(f"[red]Error: {e}[/]")
+        finally:
+            if self._tick_store:
+                self._tick_store.stop()
 
     def run_once(self, source: str = "binance") -> None:
         log.info("starting snapshot source=%s", source)
@@ -138,3 +148,9 @@ class CryptexApp:
         self._start_background_services()
         time.sleep(4)
         self.console.print(build_dashboard(self.state.snapshot(), self.view, self.selected_symbol))
+        if self._stream:
+            self._stream.stop()
+        if self._notifier:
+            self._notifier.stop()
+        if self._tick_store:
+            self._tick_store.stop()

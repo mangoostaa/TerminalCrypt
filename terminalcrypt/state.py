@@ -4,12 +4,15 @@ import threading
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 
+from .storage import TickRecord
+
 HISTORY_MAX = 120
 CANDLE_INTERVALS = (60, 300)
 
 class MarketState:
-    def __init__(self):
+    def __init__(self, tick_recorder=None):
         self._lock = threading.Lock()
+        self.tick_recorder = tick_recorder
         self.prices: dict = {}
         self.prev: dict = {}
         self.chg24h: dict = {}
@@ -121,7 +124,24 @@ class MarketState:
             self.last_tick[sym] = tick_ts
             if latency_ms:
                 self.latency_ms[sym] = latency_ms
+            tick_record = TickRecord(
+                symbol=sym,
+                price=price,
+                change_24h=chg24,
+                high_24h=high,
+                low_24h=low,
+                volume_24h=vol,
+                bid=bid,
+                ask=ask,
+                spread=self.spread.get(sym, 0.0),
+                volume_delta=vol_delta,
+                latency_ms=latency_ms,
+                source=self.ws_source,
+                observed_at=tick_dt.isoformat(),
+            )
 
+        if self.tick_recorder:
+            self.tick_recorder.record_tick(tick_record)
         self._check_alert(sym, price)
 
     def _update_timeframe_candles(self, sym: str, price: float, volume: float, tick_dt: datetime) -> None:

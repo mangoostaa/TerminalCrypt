@@ -12,6 +12,7 @@ Real-time cryptocurrency terminal dashboard with WebSocket market feeds, live te
 - Market dashboard with rotating categories, detail view, Coinbase Top 5 ranking, alerts, news, global stats, and Fear & Greed data.
 - Configurable local settings through `terminalcrypt.toml` or `TERMINALCRYPT_` environment variables.
 - Optional Telegram surge alerts.
+- Optional SQLite tick persistence for local analysis and replay workflows.
 - Accelerated indicator backend through Rust, with fallback paths for Cython and pure Python.
 
 ## Screenshots
@@ -108,6 +109,9 @@ selected_symbol = "BTC"
 refresh_per_second = 2
 rest_enabled = true
 telegram_enabled = true
+sqlite_enabled = false
+sqlite_path = "data/terminalcrypt.sqlite3"
+sqlite_batch_size = 100
 log_file = "logs/terminalcrypt.log"
 log_level = "INFO"
 fg_interval = 300
@@ -126,6 +130,19 @@ On Linux/macOS:
 ```bash
 export TERMINALCRYPT_SOURCE=kraken
 ```
+
+## SQLite Persistence
+
+SQLite persistence is disabled by default. Enable it in `terminalcrypt.toml` when you want to store market ticks locally:
+
+```toml
+[terminalcrypt]
+sqlite_enabled = true
+sqlite_path = "data/terminalcrypt.sqlite3"
+sqlite_batch_size = 100
+```
+
+The writer runs on a background thread and stores ticks in a `ticks` table with symbol, source, price, 24h stats, bid/ask, spread, volume delta, latency, and UTC timestamp.
 
 ## Optional API Keys
 

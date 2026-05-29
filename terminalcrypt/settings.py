@@ -23,6 +23,9 @@ class AppSettings:
     refresh_per_second: int = 2
     rest_enabled: bool = True
     telegram_enabled: bool = True
+    sqlite_enabled: bool = False
+    sqlite_path: str = "data/terminalcrypt.sqlite3"
+    sqlite_batch_size: int = 100
     log_file: str = "logs/terminalcrypt.log"
     log_level: str = "INFO"
     fg_interval: int = 300
@@ -63,6 +66,7 @@ def load_settings(path: Path | str = CONFIG_PATH) -> AppSettings:
         values["initial_view"] = "markets"
     values["selected_symbol"] = str(values["selected_symbol"]).upper()
     values["refresh_per_second"] = max(1, min(int(values["refresh_per_second"]), 10))
+    values["sqlite_batch_size"] = max(1, int(values["sqlite_batch_size"]))
     values["fg_interval"] = max(30, int(values["fg_interval"]))
     values["global_interval"] = max(30, int(values["global_interval"]))
     values["news_interval"] = max(30, int(values["news_interval"]))
