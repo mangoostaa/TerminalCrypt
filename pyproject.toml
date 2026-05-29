@@ -13,12 +13,25 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Terminals",
     "Operating System :: OS Independent",
 ]
+
+[project.scripts]
+terminalcrypt = "terminalcrypt.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/YOUR_USERNAME/az-terminal"
 "Bug Tracker" = "https://github.com/YOUR_USERNAME/az-terminal/issues"
+
+[tool.setuptools.packages.find]
+include = ["terminalcrypt*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
 
 [build-system]
 requires = ["maturin>=1.13,<2"]

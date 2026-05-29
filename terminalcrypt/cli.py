@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from . import __version__
 from .app import CryptexApp
 from .config import HELP_TEXT
 from .settings import configure_logging, load_settings
@@ -21,6 +22,7 @@ def main() -> None:
     parser.add_argument("--source", default=settings.source, choices=["binance", "coinbase", "kraken"])
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--alert", nargs=2, metavar=("SYM", "PRICE"))
+    parser.add_argument("--version", action="version", version=f"terminalcrypt {__version__}")
     parser.add_argument("--help", action="store_true")
     args = parser.parse_args()
 
