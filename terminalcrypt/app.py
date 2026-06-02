@@ -23,6 +23,25 @@ from .streams import BinanceStream, CoinbaseStream, KrakenStream
 log = logging.getLogger(__name__)
 
 
+STARTUP_BANNER = r"""
+      ___      ______   _______  _______  ______   __   __  ___   __    _  _______  ___
+     /   \    |____  | |       ||       ||    _ | |  |_|  ||   | |  |  | ||   _   ||   |
+    /  ^  \       / /  |_     _||    ___||   | || |       ||   | |   |_| ||  |_|  ||   |
+   /  /_\  \     / /     |   |  |   |___ |   |_||_|       ||   | |       ||       ||   |
+  /  _____  \   / /      |   |  |    ___||    __  ||     | |   | |  _    ||       ||   |
+ /__/     \__\ / /       |   |  |   |___ |   |  | ||   _   ||   | | | |   ||   _   ||   |
+             /_/         |___|  |_______||___|  |_||__| |__||___| |_|  |__||__| |__||___|
+"""
+
+BOOT_SEQUENCE = (
+    "[ OK ] loading market intelligence core",
+    "[ OK ] websocket uplink armed",
+    "[ OK ] volatility matrix online",
+    "[ OK ] scanner modules: movers volume signals setups",
+    "[ OK ] ACCESS GRANTED :: AZ TERMINAL",
+)
+
+
 class CryptexApp:
     def __init__(self, settings: AppSettings | None = None):
         self.settings = settings or AppSettings()
@@ -36,6 +55,16 @@ class CryptexApp:
         self.console = Console()
         self.view = self.settings.initial_view
         self.selected_symbol = self.settings.selected_symbol
+
+    def _print_startup_banner(self, source: str, mode: str = "LIVE") -> None:
+        self.console.print(f"[bold bright_green]{STARTUP_BANNER}[/]", highlight=False)
+        self.console.print(
+            f"[bold green]:: AZ TERMINAL v3.2 :: {mode} :: SOURCE={source.upper()} ::[/]",
+            highlight=False,
+        )
+        for line in BOOT_SEQUENCE:
+            self.console.print(f"[dim green]{line}[/]", highlight=False)
+        self.console.print()
 
     def _read_key(self) -> Optional[str]:
         if sys.platform.startswith("win"):
@@ -104,6 +133,7 @@ class CryptexApp:
 
     def run_live(self, source: str = "binance") -> None:
         log.info("starting live dashboard source=%s", source)
+        self._print_startup_banner(source, "LIVE")
         self.console.print(
             f"[bold bright_green]AZ TERMINAL v3.2[/] iniciando WebSocket [{source}]...",
             highlight=False,
@@ -154,6 +184,7 @@ class CryptexApp:
     ) -> None:
         log.info("starting snapshot source=%s", source)
         if output_format == "table":
+            self._print_startup_banner(source, "SNAPSHOT")
             self.console.print("[bold bright_green]AZ TERMINAL - SNAPSHOT[/]")
         self.start_streams(source)
         if output_format == "table":
