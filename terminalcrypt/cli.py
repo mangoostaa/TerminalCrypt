@@ -7,6 +7,7 @@ from . import __version__
 from .app import CryptexApp
 from .config import HELP_TEXT
 from .export import parse_symbols
+from .scanner import SCAN_MODES
 from .settings import configure_logging, load_settings
 
 
@@ -25,6 +26,8 @@ def main() -> None:
     parser.add_argument("--format", default="table", choices=["table", "json", "csv"])
     parser.add_argument("--output")
     parser.add_argument("--symbols")
+    parser.add_argument("--scan", choices=SCAN_MODES)
+    parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--alert", nargs=2, metavar=("SYM", "PRICE"))
     parser.add_argument("--version", action="version", version=f"terminalcrypt {__version__}")
     parser.add_argument("--help", action="store_true")
@@ -48,6 +51,8 @@ def main() -> None:
             output_format=args.format,
             output_path=args.output,
             symbols=parse_symbols(args.symbols),
+            scan=args.scan,
+            limit=max(1, args.limit),
         )
     else:
         app.run_live(args.source)

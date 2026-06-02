@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from terminalcrypt.export import parse_symbols, render_snapshot, snapshot_rows, write_snapshot
+from terminalcrypt.export import parse_symbols, render_scan, render_snapshot, snapshot_rows, write_snapshot
 from terminalcrypt.state import MarketState
 
 
@@ -40,6 +40,17 @@ class ExportTests(unittest.TestCase):
         rows = list(csv.DictReader(io.StringIO(content)))
         self.assertEqual(rows[0]["symbol"], "BTC")
         self.assertEqual(rows[0]["price"], "129.0")
+
+    def test_render_scan_json_snapshot(self):
+        payload = json.loads(render_scan(_snapshot(), "json", "signals", limit=1, symbols=["BTC"]))
+        self.assertEqual(payload["scan"], "signals")
+        self.assertEqual(payload["rows"][0]["symbol"], "BTC")
+
+    def test_render_scan_csv_snapshot(self):
+        content = render_scan(_snapshot(), "csv", "movers", limit=1, symbols=["BTC"])
+        rows = list(csv.DictReader(io.StringIO(content)))
+        self.assertEqual(rows[0]["rank"], "1")
+        self.assertEqual(rows[0]["symbol"], "BTC")
 
     def test_write_snapshot_creates_parent_directory(self):
         with tempfile.TemporaryDirectory() as tmp:

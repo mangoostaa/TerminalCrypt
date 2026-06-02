@@ -35,6 +35,10 @@ class CliTests(unittest.TestCase):
                     "snapshot.json",
                     "--symbols",
                     "btc,eth",
+                    "--scan",
+                    "signals",
+                    "--limit",
+                    "3",
                 ],
             ):
                 main()
@@ -44,6 +48,8 @@ class CliTests(unittest.TestCase):
             output_format="json",
             output_path="snapshot.json",
             symbols=["BTC", "ETH"],
+            scan="signals",
+            limit=3,
         )
 
 

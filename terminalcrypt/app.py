@@ -11,9 +11,10 @@ from rich.live import Live
 
 from .config import HELP_TEXT, SYMBOLS_ORDERED
 from .dashboard import build_dashboard
-from .export import render_snapshot, write_snapshot
+from .export import render_scan, render_snapshot, write_snapshot
 from .notifications import start_surge_notifications
 from .rest import start_rest
+from .scanner import render_scan_table, scan_snapshot
 from .settings import AppSettings
 from .state import MarketState
 from .storage import SQLiteTickStore
@@ -148,6 +149,8 @@ class CryptexApp:
         output_format: str = "table",
         output_path: str | None = None,
         symbols: list[str] | None = None,
+        scan: str | None = None,
+        limit: int = 10,
     ) -> None:
         log.info("starting snapshot source=%s", source)
         if output_format == "table":
@@ -158,9 +161,16 @@ class CryptexApp:
         time.sleep(4)
         snapshot = self.state.snapshot()
         if output_format == "table":
-            self.console.print(build_dashboard(snapshot, self.view, self.selected_symbol))
+            if scan:
+                self.console.print(render_scan_table(scan_snapshot(snapshot, scan, limit, symbols), scan))
+            else:
+                self.console.print(build_dashboard(snapshot, self.view, self.selected_symbol))
         else:
-            content = render_snapshot(snapshot, output_format, symbols)
+            content = (
+                render_scan(snapshot, output_format, scan, limit, symbols)
+                if scan
+                else render_snapshot(snapshot, output_format, symbols)
+            )
             if output_path:
                 write_snapshot(output_path, content)
                 self.console.print(f"[bright_green]Snapshot guardado:[/] {output_path}", highlight=False)

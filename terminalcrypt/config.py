@@ -150,6 +150,9 @@ HELP_TEXT = """
   [bright_green]python3 cryptex_terminal.py --once --format csv[/]     Snapshot CSV
   [bright_green]python3 cryptex_terminal.py --once --symbols BTC,ETH[/] Filtra simbolos
   [bright_green]python3 cryptex_terminal.py --once --output snap.json[/] Guarda salida
+  [bright_green]python3 cryptex_terminal.py --once --scan movers[/]    Top movimientos 24h
+  [bright_green]python3 cryptex_terminal.py --once --scan volume[/]    Top volumen relativo
+  [bright_green]python3 cryptex_terminal.py --once --scan signals[/]   Top senales tecnicas
   [bright_green]python3 cryptex_terminal.py --alert BTC 100000[/]      Alerta BTC ≥ $100,000
 
 [bold]ALERTAS TELEGRAM:[/bold]

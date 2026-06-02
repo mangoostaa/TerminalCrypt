@@ -9,6 +9,7 @@ from typing import Iterable
 
 from .analytics import analytics_cache
 from .config import SYMBOLS_ORDERED
+from .scanner import SCAN_FIELDS, scan_snapshot
 
 
 EXPORT_FIELDS = [
@@ -74,8 +75,13 @@ def snapshot_rows(snapshot: dict, symbols: Iterable[str] | None = None) -> list[
     return rows
 
 
-def render_snapshot(snapshot: dict, output_format: str, symbols: Iterable[str] | None = None) -> str:
-    rows = snapshot_rows(snapshot, symbols)
+def _render_rows(
+    snapshot: dict,
+    output_format: str,
+    rows: list[dict],
+    fields: list[str],
+    scan_mode: str | None = None,
+) -> str:
     if output_format == "json":
         payload = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -84,14 +90,31 @@ def render_snapshot(snapshot: dict, output_format: str, symbols: Iterable[str] |
             "ticks": snapshot.get("ws_ticks", 0),
             "rows": rows,
         }
+        if scan_mode:
+            payload["scan"] = scan_mode
         return json.dumps(payload, ensure_ascii=False, indent=2)
     if output_format == "csv":
         buffer = io.StringIO()
-        writer = csv.DictWriter(buffer, fieldnames=EXPORT_FIELDS, lineterminator="\n")
+        writer = csv.DictWriter(buffer, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
         return buffer.getvalue().rstrip("\n")
     raise ValueError(f"Unsupported export format: {output_format}")
+
+
+def render_snapshot(snapshot: dict, output_format: str, symbols: Iterable[str] | None = None) -> str:
+    return _render_rows(snapshot, output_format, snapshot_rows(snapshot, symbols), EXPORT_FIELDS)
+
+
+def render_scan(
+    snapshot: dict,
+    output_format: str,
+    mode: str,
+    limit: int = 10,
+    symbols: Iterable[str] | None = None,
+) -> str:
+    rows = scan_snapshot(snapshot, mode, limit, symbols)
+    return _render_rows(snapshot, output_format, rows, SCAN_FIELDS, scan_mode=mode)
 
 
 def write_snapshot(path: str | Path, content: str) -> None:
