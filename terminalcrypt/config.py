@@ -153,6 +153,7 @@ HELP_TEXT = """
   [bright_green]python3 cryptex_terminal.py --once --scan movers[/]    Top movimientos 24h
   [bright_green]python3 cryptex_terminal.py --once --scan volume[/]    Top volumen relativo
   [bright_green]python3 cryptex_terminal.py --once --scan signals[/]   Top senales tecnicas
+  [bright_green]python3 cryptex_terminal.py --once --scan setups[/]    Entradas, stops y targets
   [bright_green]python3 cryptex_terminal.py --alert BTC 100000[/]      Alerta BTC ≥ $100,000
 
 [bold]ALERTAS TELEGRAM:[/bold]

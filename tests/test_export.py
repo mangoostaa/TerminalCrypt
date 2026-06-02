@@ -52,6 +52,16 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(rows[0]["rank"], "1")
         self.assertEqual(rows[0]["symbol"], "BTC")
 
+    def test_render_setups_json_snapshot(self):
+        payload = json.loads(render_scan(_snapshot(), "json", "setups", limit=1, symbols=["BTC"]))
+        row = payload["rows"][0]
+        self.assertEqual(payload["scan"], "setups")
+        self.assertEqual(row["symbol"], "BTC")
+        self.assertIn(row["side"], {"LONG", "SHORT"})
+        self.assertGreater(row["entry"], 0)
+        self.assertGreater(row["stop_loss"], 0)
+        self.assertGreater(row["take_profit_1"], 0)
+
     def test_write_snapshot_creates_parent_directory(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "nested" / "snapshot.json"

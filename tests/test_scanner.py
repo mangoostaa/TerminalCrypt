@@ -36,6 +36,19 @@ class ScannerTests(unittest.TestCase):
         table = render_scan_table(rows, "signals")
         self.assertEqual(table.title, "Scanner: Senales")
 
+    def test_setups_scan_includes_trade_levels(self):
+        rows = scan_snapshot(_snapshot(), "setups", limit=1, symbols=["BTC"])
+        row = rows[0]
+        self.assertIn(row["side"], {"LONG", "SHORT"})
+        self.assertGreater(row["entry"], 0)
+        self.assertGreater(row["take_profit_2"], 0)
+        self.assertEqual(row["risk_reward_1"], 1.5)
+        self.assertIn("score=", row["reason"])
+
+    def test_setups_scan_renders_table(self):
+        table = render_scan_table(scan_snapshot(_snapshot(), "setups", limit=1), "setups")
+        self.assertEqual(table.title, "Scanner: Trade Setups")
+
 
 if __name__ == "__main__":
     unittest.main()
