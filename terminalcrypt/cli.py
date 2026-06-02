@@ -6,6 +6,7 @@ import sys
 from . import __version__
 from .app import CryptexApp
 from .config import HELP_TEXT
+from .export import parse_symbols
 from .settings import configure_logging, load_settings
 
 
@@ -21,6 +22,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--source", default=settings.source, choices=["binance", "coinbase", "kraken"])
     parser.add_argument("--once", action="store_true")
+    parser.add_argument("--format", default="table", choices=["table", "json", "csv"])
+    parser.add_argument("--output")
+    parser.add_argument("--symbols")
     parser.add_argument("--alert", nargs=2, metavar=("SYM", "PRICE"))
     parser.add_argument("--version", action="version", version=f"terminalcrypt {__version__}")
     parser.add_argument("--help", action="store_true")
@@ -39,6 +43,11 @@ def main() -> None:
         except ValueError:
             app.console.print("[red]Precio inválido.[/]")
     elif args.once:
-        app.run_once(args.source)
+        app.run_once(
+            args.source,
+            output_format=args.format,
+            output_path=args.output,
+            symbols=parse_symbols(args.symbols),
+        )
     else:
         app.run_live(args.source)

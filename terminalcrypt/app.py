@@ -11,6 +11,7 @@ from rich.live import Live
 
 from .config import HELP_TEXT, SYMBOLS_ORDERED
 from .dashboard import build_dashboard
+from .export import render_snapshot, write_snapshot
 from .notifications import start_surge_notifications
 from .rest import start_rest
 from .settings import AppSettings
@@ -141,13 +142,30 @@ class CryptexApp:
             if self._tick_store:
                 self._tick_store.stop()
 
-    def run_once(self, source: str = "binance") -> None:
+    def run_once(
+        self,
+        source: str = "binance",
+        output_format: str = "table",
+        output_path: str | None = None,
+        symbols: list[str] | None = None,
+    ) -> None:
         log.info("starting snapshot source=%s", source)
-        self.console.print("[bold bright_green]AZ TERMINAL - SNAPSHOT[/]")
+        if output_format == "table":
+            self.console.print("[bold bright_green]AZ TERMINAL - SNAPSHOT[/]")
         self.start_streams(source)
-        self._start_background_services()
+        if output_format == "table":
+            self._start_background_services()
         time.sleep(4)
-        self.console.print(build_dashboard(self.state.snapshot(), self.view, self.selected_symbol))
+        snapshot = self.state.snapshot()
+        if output_format == "table":
+            self.console.print(build_dashboard(snapshot, self.view, self.selected_symbol))
+        else:
+            content = render_snapshot(snapshot, output_format, symbols)
+            if output_path:
+                write_snapshot(output_path, content)
+                self.console.print(f"[bright_green]Snapshot guardado:[/] {output_path}", highlight=False)
+            else:
+                self.console.print(content, markup=False, highlight=False)
         if self._stream:
             self._stream.stop()
         if self._notifier:
