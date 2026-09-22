@@ -4,7 +4,49 @@ import json
 import unittest
 
 from terminalcrypt.state import MarketState
-from terminalcrypt.streams import BinanceStream, CoinbaseStream, KrakenStream
+from terminalcrypt.streams import BinanceFocusStream, BinanceStream, CoinbaseStream, KrakenStream
+
+
+class FocusStreamParserTests(unittest.TestCase):
+    def test_aggtrade_records_taker_side(self):
+        state = MarketState()
+        stream = BinanceFocusStream(state, "BTC")
+        # m=True means the buyer is the maker, so the aggressor sold.
+        stream._on_message(None, json.dumps({
+            "stream": "btcusdt@aggTrade",
+            "data": {"e": "aggTrade", "s": "BTCUSDT", "p": "100.5", "q": "0.25", "m": True},
+        }))
+        stream._on_message(None, json.dumps({
+            "stream": "btcusdt@aggTrade",
+            "data": {"e": "aggTrade", "s": "BTCUSDT", "p": "101.0", "q": "0.10", "m": False},
+        }))
+        trades = state.snapshot()["trades"]["BTC"]
+        self.assertEqual(trades[0]["side"], "sell")
+        self.assertEqual(trades[1]["side"], "buy")
+        self.assertEqual(trades[1]["price"], 101.0)
+
+    def test_depth_populates_orderbook(self):
+        state = MarketState()
+        stream = BinanceFocusStream(state, "BTC")
+        stream._on_message(None, json.dumps({
+            "stream": "btcusdt@depth20@100ms",
+            "data": {"bids": [["99.5", "2"], ["99.0", "1"]], "asks": [["100.5", "3"], ["101.0", "1"]]},
+        }))
+        book = state.snapshot()["orderbook"]["BTC"]
+        self.assertEqual(book["bids"][0], (99.5, 2.0))
+        self.assertEqual(book["asks"][0], (100.5, 3.0))
+
+    def test_set_symbol_clears_stale_book(self):
+        state = MarketState()
+        stream = BinanceFocusStream(state, "BTC")
+        stream._on_message(None, json.dumps({
+            "stream": "ethusdt@depth20@100ms",
+            "data": {"bids": [["10", "1"]], "asks": [["11", "1"]]},
+        }))
+        # set_symbol should not raise when there is no live socket and should
+        # drop any stale book for the new symbol.
+        stream.set_symbol("ETH")
+        self.assertNotIn("ETH", state.snapshot()["orderbook"])
 
 
 class StreamParserTests(unittest.TestCase):

@@ -1,0 +1,8 @@
+{
+  "holdings": [
+    { "symbol": "BTC", "quantity": 0.35, "cost_basis": 42000 },
+    { "symbol": "ETH", "quantity": 4.0,  "cost_basis": 2300 },
+    { "symbol": "SOL", "quantity": 60.0, "cost_basis": 95 },
+    { "symbol": "LINK", "quantity": 250.0, "cost_basis": 12.4 }
+  ]
+}

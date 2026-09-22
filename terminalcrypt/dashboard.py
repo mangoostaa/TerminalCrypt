@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 from rich import box
+from rich.console import Group
 from rich.layout import Layout
 from rich.panel import Panel
 from rich.rule import Rule
@@ -12,6 +13,7 @@ from rich.text import Text
 from .analytics import analytics_cache
 from .config import SYMBOL_CATEGORIES, SYMBOL_NAME, SYMBOLS_ORDERED
 from .formatters import (
+    fmt_large,
     fmt_price,
     pct_text,
     price_flash_color,
@@ -425,9 +427,160 @@ def panel_symbol_detail(s: dict, selected_symbol: str = "BTC") -> Panel:
     add_candle_rows("VELA 5M", candles_5m)
 
     grid.add_row(market, technical, signal, candles_tbl)
+
+    depth = Table.grid(padding=(0, 3), expand=True)
+    depth.add_column(ratio=3)
+    depth.add_column(ratio=2)
+    depth.add_row(
+        Panel(orderbook_table(s, sym), title="[bold bright_green]ORDER BOOK[/]", border_style="dark_green", padding=(0, 1)),
+        Panel(trade_tape_table(s, sym), title="[bold bright_green]TRADE TAPE[/]", border_style="dark_green", padding=(0, 1)),
+    )
     return Panel(
-        grid,
+        Group(grid, depth),
         title=f"[bold bright_green]DETALLE - {sym}[/] [dim]{SYMBOL_NAME.get(sym, '')}[/]",
+        border_style="green",
+    )
+
+
+def _fmt_qty(q: float) -> str:
+    if q >= 1_000_000:
+        return f"{q/1e6:.2f}M"
+    if q >= 1_000:
+        return f"{q/1e3:.2f}K"
+    if q >= 1:
+        return f"{q:,.2f}"
+    return f"{q:.4f}"
+
+
+def orderbook_table(s: dict, sym: str) -> Table:
+    """Depth ladder with a cumulative-size bar for the focused symbol."""
+    book = s.get("orderbook", {}).get(sym, {})
+    bids = book.get("bids", [])
+    asks = book.get("asks", [])
+    tbl = Table.grid(padding=(0, 1), expand=True)
+    tbl.add_column(justify="right", style="bright_green")   # bid size
+    tbl.add_column(justify="right", style="green")           # bid price
+    tbl.add_column(justify="left", style="red")              # ask price
+    tbl.add_column(justify="left", style="bright_red")       # ask size
+
+    if not bids and not asks:
+        tbl.add_row(Text("─", style="dim"), Text("esperando", style="dim"), Text("depth", style="dim"), Text("─", style="dim"))
+        return tbl
+
+    rows = max(len(bids), len(asks))
+    max_qty = max([q for _, q in bids] + [q for _, q in asks] + [1e-9])
+    for i in range(rows):
+        if i < len(bids):
+            bp, bq = bids[i]
+            bar = "█" * int(bq / max_qty * 8)
+            bid_size = Text(f"{bar} {_fmt_qty(bq)}", style="bright_green")
+            bid_price = Text(fmt_price(bp).strip(), style="green")
+        else:
+            bid_size, bid_price = Text(""), Text("")
+        if i < len(asks):
+            ap, aq = asks[i]
+            bar = "█" * int(aq / max_qty * 8)
+            ask_price = Text(fmt_price(ap).strip(), style="red")
+            ask_size = Text(f"{_fmt_qty(aq)} {bar}", style="bright_red")
+        else:
+            ask_price, ask_size = Text(""), Text("")
+        tbl.add_row(bid_size, bid_price, ask_price, ask_size)
+
+    if bids and asks:
+        spread = asks[0][0] - bids[0][0]
+        mid = (asks[0][0] + bids[0][0]) / 2
+        spread_pct = spread / mid * 100 if mid else 0
+        tbl.add_row(
+            Text(""),
+            Text("spread", style="dim green", justify="right"),
+            Text(f"{spread_pct:.3f}%", style="dim yellow"),
+            Text(""),
+        )
+    return tbl
+
+
+def trade_tape_table(s: dict, sym: str) -> Table:
+    """Most recent executed trades (aggressor side coloured)."""
+    trades = list(s.get("trades", {}).get(sym, []))[-12:]
+    tbl = Table.grid(padding=(0, 1), expand=True)
+    tbl.add_column(style="dim green", min_width=8)     # time
+    tbl.add_column(justify="right", min_width=12)      # price
+    tbl.add_column(justify="right", min_width=10)      # qty
+    if not trades:
+        tbl.add_row(Text("─", style="dim"), Text("esperando trades", style="dim"), Text("─", style="dim"))
+        return tbl
+    for t in reversed(trades):
+        col = "bright_green" if t["side"] == "buy" else "bright_red"
+        arrow = "▲" if t["side"] == "buy" else "▼"
+        tbl.add_row(
+            Text(t["ts"][-8:], style="dim green"),
+            Text(f"{arrow}{fmt_price(t['price']).strip()}", style=col),
+            Text(_fmt_qty(t["qty"]), style=col),
+        )
+    return tbl
+
+
+def panel_portfolio(evaluation: dict | None) -> Panel:
+    """Holdings, live value and unrealized P&L."""
+    if not evaluation or not evaluation.get("positions"):
+        return Panel(
+            Text(
+                "Sin portfolio cargado.\n\n"
+                "Crea portfolio.json:\n"
+                '{ "holdings": [ {"symbol":"BTC","quantity":0.5,"cost_basis":42000} ] }\n\n'
+                "y ejecuta: python3 cryptex_terminal.py --portfolio portfolio.json",
+                style="dim green",
+            ),
+            title="[bold bright_green]◆ PORTFOLIO[/]",
+            border_style="green",
+        )
+    tbl = Table(
+        box=box.SIMPLE_HEAVY,
+        border_style="dark_green",
+        header_style="bold bright_green",
+        expand=True,
+        padding=(0, 1),
+    )
+    tbl.add_column("SYM", style="bold bright_green", min_width=6)
+    tbl.add_column("CANT", justify="right", min_width=12)
+    tbl.add_column("COSTO", justify="right", min_width=12)
+    tbl.add_column("PRECIO", justify="right", min_width=12)
+    tbl.add_column("VALOR", justify="right", min_width=14)
+    tbl.add_column("P&L", justify="right", min_width=14)
+    tbl.add_column("P&L%", justify="right", min_width=9)
+    tbl.add_column("ALLOC", justify="right", min_width=8)
+
+    for pos in evaluation["positions"]:
+        pnl = pos["pnl"]
+        pnl_col = "bright_green" if pnl > 0 else "bright_red" if pnl < 0 else "dim white"
+        price_txt = fmt_price(pos["price"]) if pos["priced"] else Text("─ sin precio", style="dim yellow")
+        tbl.add_row(
+            pos["symbol"],
+            Text(f"{pos['quantity']:,.6g}", style="bright_white"),
+            Text(fmt_price(pos["cost_basis"]), style="dim white"),
+            price_txt if isinstance(price_txt, Text) else Text(price_txt, style="bright_white"),
+            Text(fmt_large(pos["value"]), style="bright_white"),
+            Text(f"{'+' if pnl >= 0 else ''}{fmt_large(pnl).lstrip('$')}", style=pnl_col),
+            pct_text(pos["pnl_pct"]),
+            Text(f"{pos['allocation_pct']:.1f}%", style="dim green"),
+        )
+
+    total_pnl = evaluation["total_pnl"]
+    total_col = "bright_green" if total_pnl > 0 else "bright_red" if total_pnl < 0 else "white"
+    footer = Table.grid(expand=True, padding=(0, 2))
+    footer.add_column()
+    footer.add_column(justify="right")
+    footer.add_row(
+        Text(f"Valor total: {fmt_large(evaluation['total_value'])}", style="bold bright_white"),
+        Text(
+            f"P&L total: {'+' if total_pnl >= 0 else ''}{fmt_large(total_pnl).lstrip('$')} "
+            f"({evaluation['total_pnl_pct']:+.2f}%)",
+            style=f"bold {total_col}",
+        ),
+    )
+    return Panel(
+        Group(tbl, Rule(style="dark_green"), footer),
+        title=f"[bold bright_green]◆ PORTFOLIO[/]  [dim]{evaluation['count']} posiciones · P&L no realizado[/]",
         border_style="green",
     )
 
@@ -596,7 +749,7 @@ def panel_footer(s: dict, view: str = "markets") -> Panel:
     return Panel(Text.from_markup(txt), border_style="dark_green", padding=(0, 1))
 
 
-def build_dashboard(s: dict, view: str = "markets", selected_symbol: str = "BTC") -> Layout:
+def build_dashboard(s: dict, view: str = "markets", selected_symbol: str = "BTC", portfolio_eval: dict | None = None) -> Layout:
     layout = Layout()
     layout.split_column(
         Layout(name="header", size=3),
@@ -618,6 +771,9 @@ def build_dashboard(s: dict, view: str = "markets", selected_symbol: str = "BTC"
     layout["alerts"].update(panel_alerts(s))
     if view == "detail":
         layout["prices"].update(panel_symbol_detail(s, selected_symbol))
+        layout["legend"].update(panel_indicators_legend())
+    elif view == "portfolio":
+        layout["prices"].update(panel_portfolio(portfolio_eval))
         layout["legend"].update(panel_indicators_legend())
     elif view == "top5":
         layout["prices"].update(panel_coinbase_top5(s))

@@ -13,3 +13,7 @@ log_level = "INFO"
 fg_interval = 300
 global_interval = 120
 news_interval = 180
+# Trading features
+warmup_enabled = true          # sembrar indicadores con velas históricas al arrancar
+depth_enabled = true           # order book + trade tape del símbolo seleccionado (Binance)
+portfolio_file = ""            # ruta a portfolio.json / .toml para seguimiento de P&L

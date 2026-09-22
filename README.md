@@ -13,6 +13,9 @@ Real-time cryptocurrency terminal dashboard with WebSocket market feeds, live te
 - Configurable local settings through `terminalcrypt.toml` or `TERMINALCRYPT_` environment variables.
 - Optional Telegram surge alerts.
 - Optional SQLite tick persistence for local analysis and replay workflows.
+- Live order book depth ladder and trade tape for the focused symbol.
+- Portfolio tracking with live unrealized P&L, and strategy backtesting over historical candles.
+- Historical warm-up so indicators are ready from the first render.
 - Accelerated indicator backend through Rust, with fallback paths for Cython and pure Python.
 
 ## Screenshots
@@ -78,11 +81,26 @@ Create a price alert:
 terminalcrypt --alert BTC 100000
 ```
 
+Backtest the built-in signal over historical candles and exit:
+
+```bash
+terminalcrypt --backtest BTC
+terminalcrypt --backtest ETH --interval 300 --candles 500
+terminalcrypt --backtest SOL --long-only
+```
+
+Track a portfolio's live value and unrealized P&L:
+
+```bash
+terminalcrypt --portfolio portfolio.json
+```
+
 Keyboard controls in the live dashboard:
 
 - `TAB` or `I`: switch between Markets and Top 5.
 - `M`: return to Markets.
-- `D`: open Detail view.
+- `D`: open Detail view (live order book depth + trade tape for the selected symbol).
+- `W`: open the Portfolio view.
 - `N` / `P`: move the selected symbol in Detail view.
 
 ## Configuration
@@ -117,6 +135,9 @@ log_level = "INFO"
 fg_interval = 300
 global_interval = 120
 news_interval = 180
+warmup_enabled = true
+depth_enabled = true
+portfolio_file = ""
 ```
 
 Every key can be overridden with an environment variable prefixed with `TERMINALCRYPT_`, for example:
@@ -143,6 +164,46 @@ sqlite_batch_size = 100
 ```
 
 The writer runs on a background thread and stores ticks in a `ticks` table with symbol, source, price, 24h stats, bid/ask, spread, volume delta, latency, and UTC timestamp.
+
+## Trading Tools
+
+### Order book and trade tape
+
+Press `D` to open the Detail view. A dedicated Binance stream follows the
+selected symbol and renders a live depth ladder (top levels with cumulative
+size bars) plus a trade tape coloured by aggressor side. `N` / `P` move to the
+next / previous symbol and the focused stream re-subscribes automatically.
+Disable with `depth_enabled = false`.
+
+### Historical warm-up
+
+At startup the app fetches recent 1m candles for the selected symbol, the mega
+caps, and any portfolio holdings so the indicators and signal engine are warm
+from the first render. Disable with `warmup_enabled = false`.
+
+### Strategy backtesting
+
+`--backtest SYM` replays the built-in signal engine over historical candles,
+walk-forward and without lookahead, and reports strategy return versus buy &
+hold, edge, trade count, win rate, average win/loss, max drawdown, an annualized
+Sharpe estimate, and market exposure. It is a research tool, not financial advice.
+
+### Portfolio tracking
+
+Create a `portfolio.json` (see `portfolio.example.json`):
+
+```json
+{
+  "holdings": [
+    { "symbol": "BTC", "quantity": 0.35, "cost_basis": 42000 },
+    { "symbol": "ETH", "quantity": 4.0,  "cost_basis": 2300 }
+  ]
+}
+```
+
+Run with `--portfolio portfolio.json` (or set `portfolio_file` in the config)
+and press `W` for live value, allocation, and unrealized P&L. TOML portfolios
+(`[portfolio]` table, Python 3.11+) are also supported.
 
 ## Optional API Keys
 
@@ -211,16 +272,16 @@ WebSocket streams
 
 ## Roadmap
 
-- Order book depth
-- Trade tape
-- Configurable layouts
-- Portfolio tracking
-- Historical candles
-- SQLite persistence
-- Strategy backtesting
-- Plugin system
-- Docker image
-- Asyncio migration
+- [x] Order book depth
+- [x] Trade tape
+- [x] Portfolio tracking
+- [x] Historical candles
+- [x] SQLite persistence
+- [x] Strategy backtesting
+- [ ] Configurable layouts
+- [ ] Plugin system
+- [ ] Docker image
+- [ ] Asyncio migration
 
 ## Disclaimer
 

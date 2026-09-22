@@ -30,12 +30,29 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--alert", nargs=2, metavar=("SYM", "PRICE"))
     parser.add_argument("--version", action="version", version=f"terminalcrypt {__version__}")
+    parser.add_argument("--backtest", metavar="SYM", help="Backtest de la señal sobre datos históricos y salir")
+    parser.add_argument("--interval", type=int, default=60, help="Intervalo de vela en segundos para el backtest (60/300/900/3600)")
+    parser.add_argument("--candles", type=int, default=500, help="Número de velas históricas para el backtest")
+    parser.add_argument("--long-only", action="store_true", help="Backtest sólo en largo (sin cortos)")
+    parser.add_argument("--portfolio", metavar="PATH", help="Carga un portfolio (JSON/TOML) y muestra P&L en vivo")
     parser.add_argument("--help", action="store_true")
     args = parser.parse_args()
 
     app = CryptexApp(settings)
+    if args.portfolio:
+        app.load_portfolio(args.portfolio)
+
     if args.help:
         app.console.print(HELP_TEXT)
+    elif args.backtest:
+        code = app.run_backtest(
+            args.backtest,
+            source=args.source,
+            interval=args.interval,
+            limit=args.candles,
+            allow_short=not args.long_only,
+        )
+        sys.exit(code)
     elif args.alert:
         sym, price_str = args.alert
         try:
@@ -54,5 +71,8 @@ def main() -> None:
             scan=args.scan,
             limit=max(1, args.limit),
         )
+    elif args.portfolio:
+        app.view = "portfolio"
+        app.run_live(args.source)
     else:
         app.run_live(args.source)

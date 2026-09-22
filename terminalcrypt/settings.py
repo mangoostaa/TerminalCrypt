@@ -31,6 +31,9 @@ class AppSettings:
     fg_interval: int = 300
     global_interval: int = 120
     news_interval: int = 180
+    warmup_enabled: bool = True
+    depth_enabled: bool = True
+    portfolio_file: str = ""
 
 
 def _coerce(value: Any, current: Any) -> Any:

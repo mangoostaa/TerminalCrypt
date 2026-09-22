@@ -8,6 +8,8 @@ from .storage import TickRecord
 
 HISTORY_MAX = 120
 CANDLE_INTERVALS = (60, 300)
+TRADES_MAX = 50
+DEPTH_LEVELS = 12
 
 class MarketState:
     def __init__(self, tick_recorder=None):
@@ -47,6 +49,9 @@ class MarketState:
         self.ws_ticks: int = 0
         self.ws_since: str = "─"
         self.ws_reconnects: int = 0
+
+        self.trades: dict = defaultdict(lambda: deque(maxlen=TRADES_MAX))
+        self.orderbook: dict = {}
 
         self.alerts: dict = {}
         self.triggered: list = []
@@ -167,6 +172,71 @@ class MarketState:
             active["close"] = price
             active["volume"] += volume
 
+    def update_trade(self, sym: str, price: float, qty: float, side: str, ts: str | None = None) -> None:
+        """Record a single executed trade for the trade tape."""
+        if price <= 0 or qty <= 0:
+            return
+        ts = ts or datetime.now(timezone.utc).strftime("%H:%M:%S")
+        with self._lock:
+            self.trades[sym].append({
+                "price": price,
+                "qty": qty,
+                "side": side,   # "buy" (taker bought) or "sell"
+                "ts": ts,
+            })
+
+    def update_orderbook(self, sym: str, bids: list, asks: list) -> None:
+        """Store the top-of-book depth snapshot for ``sym``.
+
+        ``bids``/``asks`` are lists of ``(price, qty)`` pairs. Bids are kept
+        descending by price, asks ascending, trimmed to ``DEPTH_LEVELS``.
+        """
+        clean_bids = sorted(
+            ((float(p), float(q)) for p, q in bids if float(q) > 0),
+            key=lambda x: x[0], reverse=True,
+        )[:DEPTH_LEVELS]
+        clean_asks = sorted(
+            ((float(p), float(q)) for p, q in asks if float(q) > 0),
+            key=lambda x: x[0],
+        )[:DEPTH_LEVELS]
+        with self._lock:
+            self.orderbook[sym] = {
+                "bids": clean_bids,
+                "asks": clean_asks,
+                "ts": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+            }
+
+    def seed_candles(self, sym: str, candles: list, price_fallback: bool = True) -> None:
+        """Warm up per-symbol history from pre-fetched historical candles.
+
+        Only fills empty series so live ticks always take precedence. ``candles``
+        use the shape returned by :mod:`terminalcrypt.history`.
+        """
+        if not candles:
+            return
+        with self._lock:
+            if self.candles[60].get(sym):
+                return  # already warmed / receiving live data
+            trimmed = candles[-HISTORY_MAX:]
+            for candle in trimmed:
+                self.candles[60][sym].append({
+                    "open": float(candle["open"]),
+                    "high": float(candle["high"]),
+                    "low": float(candle["low"]),
+                    "close": float(candle["close"]),
+                    "volume": float(candle.get("volume", 0) or 0),
+                    "ts": candle.get("ts", "-"),
+                })
+            closes = [float(c["close"]) for c in trimmed]
+            if price_fallback and sym not in self.prices and closes:
+                self.prices[sym] = closes[-1]
+                self.prev[sym] = closes[-2] if len(closes) > 1 else closes[-1]
+            for c in trimmed:
+                self.history[sym].append(float(c["close"]))
+                self.high_history[sym].append(float(c["high"]))
+                self.low_history[sym].append(float(c["low"]))
+                self.open_history[sym].append(float(c["open"]))
+
     def _check_alert(self, sym: str, price: float):
         target = self.alerts.get(sym)
         if target and price >= target:
@@ -204,6 +274,8 @@ class MarketState:
                     for interval, by_symbol in self.candles.items()
                 },
                 "volume_delta": dict(self.volume_delta),
+                "trades": {k: list(v) for k, v in self.trades.items()},
+                "orderbook": {k: dict(v) for k, v in self.orderbook.items()},
                 "tick_count": dict(self.tick_count),
                 "last_tick": dict(self.last_tick),
                 "latency_ms": dict(self.latency_ms),

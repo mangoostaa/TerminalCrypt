@@ -20,6 +20,11 @@ from .state import MarketState
 
 log = logging.getLogger(__name__)
 
+# Symbol -> Binance pair (first pair seen wins), for focused depth/trade streams.
+_BINANCE_PAIR = {}
+for _pair, _sym in BINANCE_SYMBOLS.items():
+    _BINANCE_PAIR.setdefault(_sym, _pair)
+
 
 class BinanceStream:
     def __init__(self, state: MarketState):
@@ -184,6 +189,85 @@ class CoinbaseStream:
                 self._delay = min(self._delay * 2, 60)
 
         threading.Thread(target=_run, name="coinbase-ws", daemon=True).start()
+
+    def stop(self):
+        self._stop.set()
+        if self._ws:
+            self._ws.close()
+
+
+class BinanceFocusStream:
+    """Order-book depth + trade tape for a single focused symbol.
+
+    Subscribing to full depth/trade feeds for every pair would be a firehose,
+    so this stream follows only the currently selected symbol and reconnects
+    when :meth:`set_symbol` changes it.
+    """
+
+    def __init__(self, state: MarketState, symbol: str = "BTC"):
+        self.state = state
+        self._symbol = symbol
+        self._ws: websocket.WebSocketApp | None = None
+        self._stop = threading.Event()
+        self._delay = 2
+
+    def _stream_url(self) -> str | None:
+        pair = _BINANCE_PAIR.get(self._symbol)
+        if not pair:
+            return None
+        p = pair.lower()
+        return f"wss://stream.binance.com:9443/stream?streams={p}@aggTrade/{p}@depth20@100ms"
+
+    def _on_message(self, ws, raw: str):
+        try:
+            msg = json.loads(raw)
+            stream = msg.get("stream", "")
+            data = msg.get("data", msg)
+            if "@aggTrade" in stream or data.get("e") == "aggTrade":
+                price = float(data.get("p", 0) or 0)
+                qty = float(data.get("q", 0) or 0)
+                # m=True -> buyer is the maker -> the aggressor sold.
+                side = "sell" if data.get("m") else "buy"
+                self.state.update_trade(self._symbol, price, qty, side)
+            elif "@depth" in stream or "bids" in data:
+                self.state.update_orderbook(self._symbol, data.get("bids", []), data.get("asks", []))
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as e:
+            self.state.set_error("binance_focus", e)
+
+    def _on_error(self, ws, err):
+        log.warning("binance focus websocket error: %s", err)
+
+    def set_symbol(self, symbol: str) -> None:
+        if symbol == self._symbol:
+            return
+        self._symbol = symbol
+        # Drop stale depth so the panel doesn't show another symbol's book.
+        with self.state._lock:
+            self.state.orderbook.pop(symbol, None)
+        if self._ws:
+            self._ws.close()  # _run loop reconnects with the new URL
+
+    def start(self):
+        self._stop.clear()
+
+        def _run():
+            while not self._stop.is_set():
+                url = self._stream_url()
+                if not url:
+                    if self._stop.wait(2):
+                        break
+                    continue
+                self._ws = websocket.WebSocketApp(
+                    url,
+                    on_message=self._on_message,
+                    on_error=self._on_error,
+                )
+                self._ws.run_forever(ping_interval=20, ping_timeout=10)
+                if self._stop.is_set():
+                    break
+                self._stop.wait(min(self._delay, 5))
+
+        threading.Thread(target=_run, name="binance-focus-ws", daemon=True).start()
 
     def stop(self):
         self._stop.set()

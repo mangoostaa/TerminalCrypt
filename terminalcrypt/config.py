@@ -155,6 +155,9 @@ HELP_TEXT = """
   [bright_green]python3 cryptex_terminal.py --once --scan signals[/]   Top senales tecnicas
   [bright_green]python3 cryptex_terminal.py --once --scan setups[/]    Entradas, stops y targets
   [bright_green]python3 cryptex_terminal.py --alert BTC 100000[/]      Alerta BTC ≥ $100,000
+  [bright_green]python3 cryptex_terminal.py --backtest BTC[/]          Backtest de la señal (histórico) y salir
+  [bright_green]python3 cryptex_terminal.py --backtest ETH --interval 300 --limit 500[/]
+  [bright_green]python3 cryptex_terminal.py --portfolio portfolio.json[/]  Seguimiento de P&L en vivo
 
 [bold]ALERTAS TELEGRAM:[/bold]
   Configura TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID para recibir alertas
@@ -176,7 +179,15 @@ HELP_TEXT = """
   Ticker strip  → rota automáticamente cada 4s (18 símbolos visibles)
   Tabla precios → rota por categoría cada 8s (8 categorías)
   [bright_green]TAB / I[/]       alterna Markets ↔ Top 5 cuantitativo Coinbase
+  [bright_green]D[/]             detalle del símbolo (order book + trade tape en vivo)
+  [bright_green]W[/]             vista de portfolio (P&L no realizado)
+  [bright_green]N / P[/]         siguiente / anterior símbolo en el detalle
   [bright_green]M[/]             vuelve a Markets
+
+[bold]BACKTESTING Y PORTFOLIO:[/bold]
+  [bright_green]--backtest SYM[/]   replay walk-forward de la señal sobre velas históricas;
+                    reporta retorno vs buy&hold, win rate, drawdown, Sharpe y exposición.
+  [bright_green]--portfolio F[/]    carga holdings (JSON/TOML) y muestra valor y P&L en vivo.
 
 [bold]INDICADORES TÉCNICOS:[/bold]
   [bright_green]RSI(14)[/]         < 30 sobreventa  /  > 70 sobrecompra
