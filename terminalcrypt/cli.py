@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import sys
+from pathlib import Path
 
 from . import __version__
 from .app import CryptexApp
@@ -35,12 +37,39 @@ def main() -> None:
     parser.add_argument("--candles", type=int, default=500, help="Número de velas históricas para el backtest")
     parser.add_argument("--long-only", action="store_true", help="Backtest sólo en largo (sin cortos)")
     parser.add_argument("--portfolio", metavar="PATH", help="Carga un portfolio (JSON/TOML) y muestra P&L en vivo")
+    parser.add_argument("--radar", action="store_true", help="Abre el Opportunity Radar (scanner multi-factor) en vivo")
+    parser.add_argument("--paper", action="store_true", help="Activa paper trading (ejecución simulada)")
+    parser.add_argument("--paper-cash", type=float, metavar="USD", help="Efectivo inicial de la cuenta paper")
+    parser.add_argument("--paper-reset", action="store_true", help="Reinicia la cuenta paper antes de arrancar")
+    parser.add_argument("--paper-export", metavar="CSV", help="Exporta el historial de fills a CSV y sale")
     parser.add_argument("--help", action="store_true")
     args = parser.parse_args()
+
+    overrides = {}
+    if args.paper:
+        overrides["paper_enabled"] = True
+    if args.paper_cash is not None:
+        overrides["paper_cash"] = max(0.0, args.paper_cash)
+    if overrides:
+        settings = dataclasses.replace(settings, **overrides)
+
+    if args.paper_reset:
+        try:
+            Path(settings.paper_file).unlink(missing_ok=True)
+        except OSError:
+            pass
 
     app = CryptexApp(settings)
     if args.portfolio:
         app.load_portfolio(args.portfolio)
+
+    if args.paper_export:
+        from .broker import PaperBroker
+
+        broker = app.broker or PaperBroker.load(settings.paper_file, default_cash=settings.paper_cash)
+        n = broker.export_fills_csv(args.paper_export)
+        app.console.print(f"[bright_green]Exportados {n} fills a[/] {args.paper_export}")
+        sys.exit(0)
 
     if args.help:
         app.console.print(HELP_TEXT)
@@ -73,6 +102,12 @@ def main() -> None:
         )
     elif args.portfolio:
         app.view = "portfolio"
+        app.run_live(args.source)
+    elif args.paper:
+        app.view = "broker"
+        app.run_live(args.source)
+    elif args.radar:
+        app.view = "radar"
         app.run_live(args.source)
     else:
         app.run_live(args.source)

@@ -17,3 +17,10 @@ news_interval = 180
 warmup_enabled = true          # sembrar indicadores con velas históricas al arrancar
 depth_enabled = true           # order book + trade tape del símbolo seleccionado (Binance)
 portfolio_file = ""            # ruta a portfolio.json / .toml para seguimiento de P&L
+# Paper trading (ejecución simulada)
+paper_enabled = false          # activa la cuenta de paper trading
+paper_cash = 10000.0           # efectivo inicial (USD)
+paper_file = "paper_account.json"  # persistencia de la cuenta
+paper_order_usd = 500.0        # notional por orden rápida (teclas B/S)
+paper_fee_pct = 0.05           # comisión por lado (%)
+paper_slippage_pct = 0.02      # slippage de mercado (%)

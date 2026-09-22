@@ -9,7 +9,10 @@ venv/
 ENV/
 .env
 terminalcrypt.toml
+paper_account.json
+portfolio.json
 logs/
+data/
 .python-version
 .idea/
 .vscode/

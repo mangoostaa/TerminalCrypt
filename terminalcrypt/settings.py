@@ -34,6 +34,13 @@ class AppSettings:
     warmup_enabled: bool = True
     depth_enabled: bool = True
     portfolio_file: str = ""
+    # Paper trading (simulated execution)
+    paper_enabled: bool = False
+    paper_cash: float = 10_000.0
+    paper_file: str = "paper_account.json"
+    paper_order_usd: float = 500.0
+    paper_fee_pct: float = 0.05
+    paper_slippage_pct: float = 0.02
 
 
 def _coerce(value: Any, current: Any) -> Any:
@@ -41,6 +48,8 @@ def _coerce(value: Any, current: Any) -> Any:
         if isinstance(value, bool):
             return value
         return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+    if isinstance(current, float):
+        return float(value)
     if isinstance(current, int):
         return int(value)
     return str(value)
@@ -73,6 +82,10 @@ def load_settings(path: Path | str = CONFIG_PATH) -> AppSettings:
     values["fg_interval"] = max(30, int(values["fg_interval"]))
     values["global_interval"] = max(30, int(values["global_interval"]))
     values["news_interval"] = max(30, int(values["news_interval"]))
+    values["paper_cash"] = max(0.0, float(values["paper_cash"]))
+    values["paper_order_usd"] = max(1.0, float(values["paper_order_usd"]))
+    values["paper_fee_pct"] = max(0.0, float(values["paper_fee_pct"]))
+    values["paper_slippage_pct"] = max(0.0, float(values["paper_slippage_pct"]))
     return AppSettings(**values)
 
 

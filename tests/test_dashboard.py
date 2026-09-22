@@ -39,6 +39,16 @@ class DashboardTests(unittest.TestCase):
             "total_pnl_pct": 39.0, "count": 1,
         }
         build_dashboard(snap, "portfolio", "BTC", portfolio_eval)
+        # Broker (paper trading) view, empty and populated, plus flash toast.
+        build_dashboard(snap, "broker", "BTC", None, None)
+        from terminalcrypt.broker import PaperBroker
+        broker = PaperBroker(cash=10_000, fee_pct=0.0, slippage_pct=0.0)
+        broker.market_order("BTC", "buy", 0.1, 139.0)
+        broker.limit_order("ETH", "buy", 1, 100.0)
+        broker.mark({"BTC": 139.0})
+        build_dashboard(snap, "broker", "BTC", None, broker.evaluate({"BTC": 139.0}), "COMPRA BTC 0.1 @ 139")
+        # Opportunity Radar view renders over the synthetic feed.
+        build_dashboard(snap, "radar", "BTC")
         self.assertEqual(analytics_cache.intraday_rankings(snap, 1)[0]["sym"], "BTC")
         self.assertEqual(analytics_cache.volume_rankings(snap, 1)[0]["sym"], "BTC")
 

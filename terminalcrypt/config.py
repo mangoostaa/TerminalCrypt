@@ -180,14 +180,30 @@ HELP_TEXT = """
   Tabla precios → rota por categoría cada 8s (8 categorías)
   [bright_green]TAB / I[/]       alterna Markets ↔ Top 5 cuantitativo Coinbase
   [bright_green]D[/]             detalle del símbolo (order book + trade tape en vivo)
+  [bright_green]R[/]             Opportunity Radar (scanner multi-factor con niveles)
   [bright_green]W[/]             vista de portfolio (P&L no realizado)
+  [bright_green]T[/]             vista de paper trading (cuenta simulada)
   [bright_green]N / P[/]         siguiente / anterior símbolo en el detalle
   [bright_green]M[/]             vuelve a Markets
+
+[bold]PAPER TRADING (ejecución simulada, en vivo):[/bold]
+  [bright_green]B[/]             compra a mercado del símbolo seleccionado (notional configurable)
+  [bright_green]S[/]             vende a mercado del símbolo seleccionado
+  [bright_green]C[/]             cierra la posición del símbolo seleccionado
+  Activa con [bright_green]--paper[/] o paper_enabled=true. La cuenta se guarda en paper_account.json.
+  Soporta largos y cortos, órdenes límite (rellenadas al cruzar precio), comisiones y slippage.
+
+[bold]OPPORTUNITY RADAR (tecla R o --radar):[/bold]
+  Fusiona squeeze + volumen + cruce EMA + MACD + divergencia RSI + BB/VWAP en
+  una convicción 0-100 con dirección (LONG/SHORT), motivos legibles y niveles
+  por ATR: entrada, stop (∓1.5·ATR) y objetivos a 1R/2R/3R. No es asesoría.
 
 [bold]BACKTESTING Y PORTFOLIO:[/bold]
   [bright_green]--backtest SYM[/]   replay walk-forward de la señal sobre velas históricas;
                     reporta retorno vs buy&hold, win rate, drawdown, Sharpe y exposición.
   [bright_green]--portfolio F[/]    carga holdings (JSON/TOML) y muestra valor y P&L en vivo.
+  [bright_green]--paper[/]          paper trading; [bright_green]--paper-cash N[/] efectivo inicial;
+                    [bright_green]--paper-reset[/] reinicia; [bright_green]--paper-export CSV[/] exporta fills.
 
 [bold]INDICADORES TÉCNICOS:[/bold]
   [bright_green]RSI(14)[/]         < 30 sobreventa  /  > 70 sobrecompra

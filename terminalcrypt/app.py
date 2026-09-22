@@ -16,6 +16,7 @@ from .export import render_scan, render_snapshot, write_snapshot
 from .history import fetch_candles
 from .notifications import start_surge_notifications
 from .portfolio import Portfolio
+from .broker import OrderError, PaperBroker
 from .rest import start_rest
 from .scanner import render_scan_table, scan_snapshot
 from .settings import AppSettings
@@ -65,6 +66,17 @@ class CryptexApp:
         self.portfolio: Portfolio | None = None
         if self.settings.portfolio_file:
             self.load_portfolio(self.settings.portfolio_file)
+        self.broker: PaperBroker | None = None
+        self._flash: str = ""
+        self._flash_until: float = 0.0
+        if self.settings.paper_enabled:
+            self.broker = PaperBroker.load(
+                self.settings.paper_file,
+                default_cash=self.settings.paper_cash,
+                fee_pct=self.settings.paper_fee_pct,
+                slippage_pct=self.settings.paper_slippage_pct,
+            )
+            log.info("paper trading enabled, equity ≈ $%.2f", self.broker.cash)
 
     def load_portfolio(self, path: str) -> None:
         try:
@@ -115,10 +127,79 @@ class CryptexApp:
             self._follow_selected()
         elif key in ("w", "W"):
             self.view = "portfolio"
+        elif key in ("t", "T"):
+            self.view = "broker"
+        elif key in ("r", "R"):
+            self.view = "radar"
         elif key in ("n", "N"):
             self._move_selected(1)
         elif key in ("p", "P"):
             self._move_selected(-1)
+        elif key in ("b", "B"):
+            self._paper_market("buy")
+        elif key in ("s", "S"):
+            self._paper_market("sell")
+        elif key in ("c", "C"):
+            self._paper_close()
+
+    def _set_flash(self, msg: str, seconds: float = 4.0) -> None:
+        self._flash = msg
+        self._flash_until = time.monotonic() + seconds
+
+    def _flash_msg(self) -> str | None:
+        return self._flash if time.monotonic() < self._flash_until else None
+
+    def _current_price(self, sym: str) -> float:
+        with self.state._lock:
+            return float(self.state.prices.get(sym, 0) or 0)
+
+    def _paper_market(self, side: str) -> None:
+        if not self.broker:
+            self._set_flash("Paper trading desactivado (--paper)")
+            return
+        sym = self.selected_symbol
+        price = self._current_price(sym)
+        if price <= 0:
+            self._set_flash(f"Sin precio para {sym}, no se puede operar")
+            return
+        try:
+            order = self.broker.market_notional(sym, side, self.settings.paper_order_usd, price)
+            verb = "COMPRA" if side == "buy" else "VENTA"
+            self._set_flash(f"{verb} {sym} {order['qty']:.6g} @ {order['fill_price']:.6g} (${self.settings.paper_order_usd:g})")
+            self._save_broker()
+        except OrderError as e:
+            self._set_flash(f"Orden rechazada: {e}")
+
+    def _paper_close(self) -> None:
+        if not self.broker:
+            self._set_flash("Paper trading desactivado (--paper)")
+            return
+        sym = self.selected_symbol
+        price = self._current_price(sym)
+        if price <= 0:
+            self._set_flash(f"Sin precio para {sym}")
+            return
+        order = self.broker.close(sym, price)
+        if order:
+            self._set_flash(f"CIERRE {sym} {order['qty']:.6g} @ {order['fill_price']:.6g}")
+            self._save_broker()
+        else:
+            self._set_flash(f"Sin posición abierta en {sym}")
+
+    def _save_broker(self) -> None:
+        if self.broker:
+            try:
+                self.broker.save(self.settings.paper_file)
+            except OSError as e:
+                log.warning("could not save paper account: %s", e)
+
+    def broker_eval(self) -> dict | None:
+        if not self.broker:
+            return None
+        with self.state._lock:
+            prices = dict(self.state.prices)
+        self.broker.on_prices(prices)
+        return self.broker.evaluate(prices)
 
     def _move_selected(self, step: int) -> None:
         with self.state._lock:
@@ -206,12 +287,14 @@ class CryptexApp:
                 self._notifier.stop()
             if self._tick_store:
                 self._tick_store.stop()
+            self._save_broker()
             sys.exit(0)
 
         signal.signal(signal.SIGINT, shutdown)
         signal.signal(signal.SIGTERM, shutdown)
 
         time.sleep(1.5)
+        last_mark = 0.0
         try:
             with Live(
                 build_dashboard(self.state.snapshot(), self.view, self.selected_symbol, self.portfolio_eval()),
@@ -221,13 +304,25 @@ class CryptexApp:
                 while True:
                     time.sleep(0.5)
                     self._handle_key(self._read_key())
-                    live.update(build_dashboard(self.state.snapshot(), self.view, self.selected_symbol, self.portfolio_eval()))
+                    broker_eval = self.broker_eval()
+                    now = time.monotonic()
+                    if self.broker and now - last_mark > 5.0:
+                        with self.state._lock:
+                            prices = dict(self.state.prices)
+                        self.broker.mark(prices)
+                        self._save_broker()
+                        last_mark = now
+                    live.update(build_dashboard(
+                        self.state.snapshot(), self.view, self.selected_symbol,
+                        self.portfolio_eval(), broker_eval, self._flash_msg(),
+                    ))
         except Exception as e:
             log.exception("live dashboard crashed")
             self.console.print(f"[red]Error: {e}[/]")
         finally:
             if self._tick_store:
                 self._tick_store.stop()
+            self._save_broker()
 
     def run_backtest(self, symbol: str, source: str = "binance", interval: int = 60, limit: int = 500, allow_short: bool = True) -> int:
         """Fetch history for ``symbol`` and print a backtest report. Returns exit code."""

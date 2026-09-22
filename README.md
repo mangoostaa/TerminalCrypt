@@ -13,8 +13,10 @@ Real-time cryptocurrency terminal dashboard with WebSocket market feeds, live te
 - Configurable local settings through `terminalcrypt.toml` or `TERMINALCRYPT_` environment variables.
 - Optional Telegram surge alerts.
 - Optional SQLite tick persistence for local analysis and replay workflows.
+- Opportunity Radar: multi-factor setup scanner with conviction scores, reasons, and ATR-based levels.
 - Live order book depth ladder and trade tape for the focused symbol.
 - Portfolio tracking with live unrealized P&L, and strategy backtesting over historical candles.
+- Paper trading with simulated execution: market and limit orders, longs and shorts, fees, slippage, and P&L.
 - Historical warm-up so indicators are ready from the first render.
 - Accelerated indicator backend through Rust, with fallback paths for Cython and pure Python.
 
@@ -95,13 +97,31 @@ Track a portfolio's live value and unrealized P&L:
 terminalcrypt --portfolio portfolio.json
 ```
 
+Open the Opportunity Radar (multi-factor setup scanner):
+
+```bash
+terminalcrypt --radar
+```
+
+Paper trade with simulated execution against the live feed:
+
+```bash
+terminalcrypt --paper
+terminalcrypt --paper --paper-cash 25000
+terminalcrypt --paper-reset          # reset the account before starting
+terminalcrypt --paper-export fills.csv
+```
+
 Keyboard controls in the live dashboard:
 
 - `TAB` or `I`: switch between Markets and Top 5.
 - `M`: return to Markets.
 - `D`: open Detail view (live order book depth + trade tape for the selected symbol).
+- `R`: open the Opportunity Radar.
 - `W`: open the Portfolio view.
-- `N` / `P`: move the selected symbol in Detail view.
+- `T`: open the Paper Trading view.
+- `N` / `P`: move the selected symbol.
+- `B` / `S` / `C`: paper buy / sell / close the selected symbol (when `--paper` is on).
 
 ## Configuration
 
@@ -138,6 +158,9 @@ news_interval = 180
 warmup_enabled = true
 depth_enabled = true
 portfolio_file = ""
+paper_enabled = false
+paper_cash = 10000.0
+paper_order_usd = 500.0
 ```
 
 Every key can be overridden with an environment variable prefixed with `TERMINALCRYPT_`, for example:
@@ -166,6 +189,18 @@ sqlite_batch_size = 100
 The writer runs on a background thread and stores ticks in a `ticks` table with symbol, source, price, 24h stats, bid/ask, spread, volume delta, latency, and UTC timestamp.
 
 ## Trading Tools
+
+### Opportunity Radar
+
+Press `R` (or run `--radar`) for a full-width scanner that ranks the active
+market by a single directional *conviction* score (0-100). Instead of one
+dimension, it fuses several confirming factors — a firing volatility squeeze,
+relative-volume surge, a fresh EMA 9/21 cross and trend, MACD sign and momentum,
+RSI/price divergence, Bollinger reclaim or breakout, and VWAP bias — and prints
+the reasons alongside the score. Each setup comes with concrete, ATR-based trade
+levels: entry, a `1.5·ATR` stop, and targets at 1R / 2R / 3R with the risk/reward.
+It reads the same live indicator engine as the dashboard, so it updates tick by
+tick. It is a research and idea-generation tool, not financial advice.
 
 ### Order book and trade tape
 
@@ -204,6 +239,22 @@ Create a `portfolio.json` (see `portfolio.example.json`):
 Run with `--portfolio portfolio.json` (or set `portfolio_file` in the config)
 and press `W` for live value, allocation, and unrealized P&L. TOML portfolios
 (`[portfolio]` table, Python 3.11+) are also supported.
+
+### Paper trading
+
+Enable with `--paper` (or `paper_enabled = true`) to trade a simulated account
+against the live feed. Press `T` for the account view, then:
+
+- `B` / `S`: market buy / sell the selected symbol for `paper_order_usd` of notional.
+- `C`: close the selected symbol's position.
+
+The broker supports long and short positions, resting limit orders (filled when
+the market crosses the limit), configurable `paper_fee_pct` and
+`paper_slippage_pct`, and tracks realized/unrealized P&L plus an equity curve.
+The account is persisted to `paper_file` (`paper_account.json` by default) and
+survives restarts. `--paper-reset` starts fresh; `--paper-export fills.csv`
+writes the fill history to CSV. This is a simulator for practice and strategy
+validation — no real orders are ever placed.
 
 ## Optional API Keys
 
@@ -278,6 +329,8 @@ WebSocket streams
 - [x] Historical candles
 - [x] SQLite persistence
 - [x] Strategy backtesting
+- [x] Paper trading with simulated execution
+- [x] Opportunity radar (multi-factor scanner)
 - [ ] Configurable layouts
 - [ ] Plugin system
 - [ ] Docker image

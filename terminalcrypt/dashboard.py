@@ -12,6 +12,7 @@ from rich.text import Text
 
 from .analytics import analytics_cache
 from .config import SYMBOL_CATEGORIES, SYMBOL_NAME, SYMBOLS_ORDERED
+from .radar import scan_opportunities
 from .formatters import (
     fmt_large,
     fmt_price,
@@ -585,6 +586,185 @@ def panel_portfolio(evaluation: dict | None) -> Panel:
     )
 
 
+def panel_broker(evaluation: dict | None, selected_symbol: str = "BTC") -> Panel:
+    """Paper-trading account: equity, positions, open orders and recent fills."""
+    if not evaluation:
+        return Panel(
+            Text(
+                "Paper trading desactivado.\n\n"
+                "Actívalo con  --paper  o  paper_enabled = true  en terminalcrypt.toml.\n"
+                "Teclas en vivo:  B compra · S vende · C cierra · L limit · X cancela",
+                style="dim green",
+            ),
+            title="[bold bright_green]◆ PAPER TRADING[/]",
+            border_style="green",
+        )
+
+    equity = evaluation["equity"]
+    pnl = evaluation["total_pnl"]
+    pnl_col = "bright_green" if pnl > 0 else "bright_red" if pnl < 0 else "white"
+
+    summary = Table.grid(padding=(0, 3), expand=True)
+    for _ in range(6):
+        summary.add_column(justify="left")
+    summary.add_row(
+        Text(f"EQUITY {fmt_large(equity)}", style="bold bright_white"),
+        Text(f"CASH {fmt_large(evaluation['cash'])}", style="dim white"),
+        Text(f"POSICIONES {fmt_large(evaluation['position_value'])}", style="dim white"),
+        Text(f"REALIZADO {'+' if evaluation['realized'] >= 0 else ''}{fmt_large(evaluation['realized']).lstrip('$')}",
+             style="bright_green" if evaluation["realized"] >= 0 else "bright_red"),
+        Text(f"NO REAL. {'+' if evaluation['unrealized'] >= 0 else ''}{fmt_large(evaluation['unrealized']).lstrip('$')}",
+             style="bright_green" if evaluation["unrealized"] >= 0 else "bright_red"),
+        Text(f"P&L {pnl:+,.2f} ({evaluation['total_pnl_pct']:+.2f}%)", style=f"bold {pnl_col}"),
+    )
+
+    pos_tbl = Table(box=box.SIMPLE_HEAVY, border_style="dark_green", header_style="bold bright_green", expand=True, padding=(0, 1))
+    for col, just in [("SYM", "left"), ("LADO", "center"), ("CANT", "right"), ("ENTRADA", "right"),
+                      ("MARCA", "right"), ("VALOR", "right"), ("P&L NO REAL.", "right"), ("%", "right"), ("REALIZADO", "right")]:
+        pos_tbl.add_column(col, justify=just)
+    if not evaluation["positions"]:
+        pos_tbl.add_row("─", "─", "sin posiciones", *["─"] * 6)
+    for p in evaluation["positions"]:
+        side_col = "bright_green" if p["side"] == "LONG" else "bright_red"
+        upnl = p["unrealized"]
+        upnl_col = "bright_green" if upnl > 0 else "bright_red" if upnl < 0 else "dim white"
+        pos_tbl.add_row(
+            Text(p["symbol"], style="bold bright_green"),
+            Text(p["side"], style=side_col),
+            Text(f"{p['qty']:,.6g}", style="bright_white"),
+            Text(fmt_price(p["avg"]), style="dim white"),
+            Text(fmt_price(p["mark"]) if p["priced"] else "─", style="bright_white"),
+            Text(fmt_large(abs(p["market_value"])), style="bright_white"),
+            Text(f"{'+' if upnl >= 0 else ''}{upnl:,.2f}", style=upnl_col),
+            pct_text(p["unrealized_pct"]),
+            Text(f"{p['realized']:+,.2f}", style="bright_green" if p["realized"] >= 0 else "bright_red"),
+        )
+
+    side = Table.grid(padding=(0, 1), expand=True)
+    side.add_column(style="dim green")
+    side.add_column(justify="right")
+    side.add_row("[bold]ÓRDENES ABIERTAS[/]", "")
+    if evaluation["open_orders"]:
+        for o in evaluation["open_orders"][:6]:
+            oc = "green" if o["side"] == "buy" else "red"
+            side.add_row(f"  #{o['id']} [{oc}]{o['side'][:1].upper()}[/] {o['symbol']}", Text(f"{o['qty']:g} @ {o['limit_price']:g}", style="yellow"))
+    else:
+        side.add_row("  ─", Text("ninguna", style="dim"))
+    side.add_row(Rule(style="dark_green"), "")
+    side.add_row("[bold]FILLS RECIENTES[/]", "")
+    for f in reversed(evaluation["fills"][-6:]):
+        fc = "bright_green" if f["side"] == "buy" else "bright_red"
+        side.add_row(
+            Text(f"  {f['ts'][-8:]} {f['side'][:1].upper()} {f['symbol']}", style="dim green"),
+            Text(f"{f['qty']:g} @ {f['price']:g}", style=fc),
+        )
+    if not evaluation["fills"]:
+        side.add_row("  ─", Text("sin operaciones", style="dim"))
+
+    body = Table.grid(padding=(0, 2), expand=True)
+    body.add_column(ratio=3)
+    body.add_column(ratio=2)
+    body.add_row(pos_tbl, side)
+
+    curve = evaluation.get("equity_curve", [])
+    eq_spark = sparkline(curve, 40) if len(curve) >= 2 else Text("─" * 40, style="dim dark_green")
+    footer = Table.grid(expand=True)
+    footer.add_column()
+    footer.add_column(justify="right")
+    footer.add_row(
+        Text.assemble(("EQUITY ", "dim green"), eq_spark),
+        Text(f"{evaluation['fill_count']} fills · sel {selected_symbol} · B compra S vende C cierra", style="dim green"),
+    )
+
+    return Panel(
+        Group(summary, Rule(style="dark_green"), body, Rule(style="dark_green"), footer),
+        title="[bold bright_green]◆ PAPER TRADING[/]  [dim]ejecución simulada · no es dinero real[/]",
+        border_style="green",
+    )
+
+
+def panel_radar(s: dict) -> Panel:
+    """Full-width opportunity radar: ranked multi-factor setups with levels."""
+    opps = scan_opportunities(s, analytics_cache, limit=12)
+    tbl = Table(
+        box=box.SIMPLE_HEAVY,
+        border_style="dark_green",
+        header_style="bold bright_green",
+        show_lines=False,
+        expand=True,
+        padding=(0, 1),
+    )
+    tbl.add_column("#", justify="right", min_width=2)
+    tbl.add_column("SYM", style="bold bright_green", min_width=6)
+    tbl.add_column("DIR", justify="center", min_width=6)
+    tbl.add_column("CONV", justify="left", min_width=13)
+    tbl.add_column("PRECIO", justify="right", min_width=12)
+    tbl.add_column("ENTRADA", justify="right", min_width=12)
+    tbl.add_column("STOP", justify="right", min_width=12)
+    tbl.add_column("T1 / T2 / T3", justify="right", min_width=22)
+    tbl.add_column("R:R", justify="right", min_width=4)
+    tbl.add_column("RVOL", justify="right", min_width=5)
+    tbl.add_column("RSI", justify="right", min_width=4)
+    tbl.add_column("ATR%", justify="right", min_width=5)
+    tbl.add_column("MOTIVOS", ratio=1, min_width=26)
+
+    if not opps:
+        tbl.add_row("─", "─", "─", "esperando ticks para el radar", *["─"] * 8)
+    for idx, o in enumerate(opps, start=1):
+        dir_col = "bright_green" if o["direction"] == "LONG" else "bright_red"
+        score = o["score"]
+        score_col = "bold bright_green" if score >= 75 else "green" if score >= 60 else "yellow"
+        bar_n = int(score / 100 * 8)
+        bar = "█" * bar_n + "░" * (8 - bar_n)
+        targets = " / ".join(fmt_price(t).strip() for t in o["targets"])
+        tbl.add_row(
+            str(idx),
+            o["sym"],
+            Text(("▲ " if o["direction"] == "LONG" else "▼ ") + o["direction"], style=dir_col),
+            Text(f"{bar} {score:.0f}", style=score_col),
+            Text(fmt_price(o["price"]), style="bright_white"),
+            Text(fmt_price(o["entry"]), style="dim white"),
+            Text(fmt_price(o["stop"]), style="bright_red"),
+            Text(targets, style="bright_green"),
+            Text(f"{o['risk_reward']:.1f}", style="green"),
+            Text(f"{o['rvol']:.1f}x", style="bright_green" if o["rvol"] > 2.5 else "green" if o["rvol"] > 1.5 else "dim white"),
+            Text(f"{o['rsi']:.0f}", style="bright_red" if o["rsi"] > 70 else "bright_green" if o["rsi"] < 30 else "yellow"),
+            Text(f"{o['atr_pct']:.2f}" if o["atr_pct"] else "─", style="dim green"),
+            Text(" · ".join(o["reasons"][:4]), style="dim green"),
+        )
+
+    longs = sum(1 for o in opps if o["direction"] == "LONG")
+    shorts = len(opps) - longs
+    return Panel(
+        tbl,
+        title=(
+            "[bold bright_green]◆ OPPORTUNITY RADAR[/]  "
+            f"[dim]{len(opps)} setups ({longs}L/{shorts}S) · score multi-factor · "
+            f"niveles por ATR · R = riesgo a stop · no es asesoría[/]"
+        ),
+        border_style="green",
+    )
+
+
+def panel_radar_legend() -> Panel:
+    tbl = Table.grid(padding=(0, 1), expand=True)
+    tbl.add_column(style="bold bright_green", min_width=9)
+    tbl.add_column(style="dim green")
+    tbl.add_row("CONV", "convicción 0-100 multi-factor")
+    tbl.add_row("Squeeze", "compresión BB que dispara (trigger)")
+    tbl.add_row("RVOL", "volumen relativo confirma el movimiento")
+    tbl.add_row("EMA", "cruce 9/21 reciente + tendencia")
+    tbl.add_row("MACD", "signo e impulso del histograma")
+    tbl.add_row("Diverg.", "divergencia RSI / precio")
+    tbl.add_row("BB/VWAP", "reclamo, ruptura, sesgo vs VWAP")
+    tbl.add_row(Rule(style="dark_green"), "")
+    tbl.add_row("ENTRADA", "precio actual (referencia)")
+    tbl.add_row("STOP", "entrada ∓ 1.5·ATR")
+    tbl.add_row("T1/T2/T3", "objetivos a 1R / 2R / 3R")
+    tbl.add_row("R:R", "riesgo:beneficio al objetivo 2R")
+    return Panel(tbl, title="[bold bright_green]RADAR[/]", border_style="dark_green", padding=(0, 1))
+
+
 def panel_quant_legend(s: dict) -> Panel:
     tbl = Table.grid(padding=(0, 1), expand=True)
     tbl.add_column(style="bold bright_green", min_width=10)
@@ -737,19 +917,26 @@ def panel_news(s: dict) -> Panel:
     )
 
 
-def panel_footer(s: dict, view: str = "markets") -> Panel:
+def panel_footer(s: dict, view: str = "markets", flash: str | None = None) -> Panel:
     ts = datetime.now(timezone.utc).strftime("%H:%M:%S.%f")[:-3] + " UTC"
-    view_name = "DETALLE" if view == "detail" else "TOP 5 GLOBAL" if view == "top5" else "MARKETS"
-    txt = (
-        f"[dim green]● WS LIVE — {s['ws_source']}[/]  "
-        f"[dim]{s['ws_ticks']:,} ticks  │  ~{len(SYMBOLS_ORDERED)} pares  │  "
-        f"vista: {view_name}  │  TAB/I alternar  D detalle  N/P simbolo  M markets  │  "
-        f"Ctrl+C salir[/]  [dim green]{ts}[/]"
-    )
+    view_name = {
+        "detail": "DETALLE", "top5": "TOP 5 GLOBAL", "portfolio": "PORTFOLIO",
+        "broker": "PAPER", "radar": "RADAR",
+    }.get(view, "MARKETS")
+    if flash:
+        txt = f"[bold bright_green]» {flash}[/]   [dim]{ts}[/]"
+    else:
+        txt = (
+            f"[dim green]● WS LIVE — {s['ws_source']}[/]  "
+            f"[dim]{s['ws_ticks']:,} ticks  │  vista: {view_name}  │  "
+            f"D detalle  R radar  W portfolio  T paper  N/P simbolo  │  "
+            f"B compra  S vende  C cierra  │  Ctrl+C salir[/]  [dim green]{ts}[/]"
+        )
     return Panel(Text.from_markup(txt), border_style="dark_green", padding=(0, 1))
 
 
-def build_dashboard(s: dict, view: str = "markets", selected_symbol: str = "BTC", portfolio_eval: dict | None = None) -> Layout:
+def build_dashboard(s: dict, view: str = "markets", selected_symbol: str = "BTC", portfolio_eval: dict | None = None,
+                    broker_eval: dict | None = None, flash: str | None = None) -> Layout:
     layout = Layout()
     layout.split_column(
         Layout(name="header", size=3),
@@ -775,6 +962,12 @@ def build_dashboard(s: dict, view: str = "markets", selected_symbol: str = "BTC"
     elif view == "portfolio":
         layout["prices"].update(panel_portfolio(portfolio_eval))
         layout["legend"].update(panel_indicators_legend())
+    elif view == "broker":
+        layout["prices"].update(panel_broker(broker_eval, selected_symbol))
+        layout["legend"].update(panel_indicators_legend())
+    elif view == "radar":
+        layout["prices"].update(panel_radar(s))
+        layout["legend"].update(panel_radar_legend())
     elif view == "top5":
         layout["prices"].update(panel_coinbase_top5(s))
         layout["legend"].update(panel_quant_legend(s))
@@ -785,5 +978,5 @@ def build_dashboard(s: dict, view: str = "markets", selected_symbol: str = "BTC"
     layout["global"].update(panel_global(s))
     layout["ws"].update(panel_ws_stats(s))
     layout["news"].update(panel_news(s))
-    layout["footer"].update(panel_footer(s, view))
+    layout["footer"].update(panel_footer(s, view, flash))
     return layout
