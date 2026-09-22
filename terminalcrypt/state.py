@@ -10,6 +10,7 @@ HISTORY_MAX = 120
 CANDLE_INTERVALS = (60, 300)
 TRADES_MAX = 50
 DEPTH_LEVELS = 12
+LIQUIDATIONS_MAX = 40
 
 class MarketState:
     def __init__(self, tick_recorder=None):
@@ -52,6 +53,11 @@ class MarketState:
 
         self.trades: dict = defaultdict(lambda: deque(maxlen=TRADES_MAX))
         self.orderbook: dict = {}
+
+        self.funding: dict = {}
+        self.open_interest: dict = {}
+        self.liquidations: deque = deque(maxlen=LIQUIDATIONS_MAX)
+        self.derivs_upd: str = "─"
 
         self.alerts: dict = {}
         self.triggered: list = []
@@ -206,6 +212,28 @@ class MarketState:
                 "ts": datetime.now(timezone.utc).strftime("%H:%M:%S"),
             }
 
+    def update_funding(self, funding: dict) -> None:
+        """Merge a ``{symbol: {funding_rate, mark_price, ...}}`` map."""
+        if not funding:
+            return
+        with self._lock:
+            self.funding.update(funding)
+            self.derivs_upd = datetime.now(timezone.utc).strftime("%H:%M:%S UTC")
+
+    def update_open_interest(self, oi: dict) -> None:
+        if not oi:
+            return
+        with self._lock:
+            self.open_interest.update(oi)
+
+    def add_liquidation(self, liq: dict) -> None:
+        """Record a normalized liquidation event (see :mod:`terminalcrypt.derivs`)."""
+        if not liq:
+            return
+        ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        with self._lock:
+            self.liquidations.append({**liq, "ts": ts})
+
     def seed_candles(self, sym: str, candles: list, price_fallback: bool = True) -> None:
         """Warm up per-symbol history from pre-fetched historical candles.
 
@@ -276,6 +304,10 @@ class MarketState:
                 "volume_delta": dict(self.volume_delta),
                 "trades": {k: list(v) for k, v in self.trades.items()},
                 "orderbook": {k: dict(v) for k, v in self.orderbook.items()},
+                "funding": dict(self.funding),
+                "open_interest": dict(self.open_interest),
+                "liquidations": list(self.liquidations),
+                "derivs_upd": self.derivs_upd,
                 "tick_count": dict(self.tick_count),
                 "last_tick": dict(self.last_tick),
                 "latency_ms": dict(self.latency_ms),

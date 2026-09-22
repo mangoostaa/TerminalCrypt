@@ -34,6 +34,9 @@ class AppSettings:
     warmup_enabled: bool = True
     depth_enabled: bool = True
     portfolio_file: str = ""
+    derivs_enabled: bool = True
+    derivs_interval: int = 60
+    whale_usd: float = 100_000.0
     # Paper trading (simulated execution)
     paper_enabled: bool = False
     paper_cash: float = 10_000.0
@@ -82,6 +85,8 @@ def load_settings(path: Path | str = CONFIG_PATH) -> AppSettings:
     values["fg_interval"] = max(30, int(values["fg_interval"]))
     values["global_interval"] = max(30, int(values["global_interval"]))
     values["news_interval"] = max(30, int(values["news_interval"]))
+    values["derivs_interval"] = max(30, int(values["derivs_interval"]))
+    values["whale_usd"] = max(1_000.0, float(values["whale_usd"]))
     values["paper_cash"] = max(0.0, float(values["paper_cash"]))
     values["paper_order_usd"] = max(1.0, float(values["paper_order_usd"]))
     values["paper_fee_pct"] = max(0.0, float(values["paper_fee_pct"]))

@@ -13,6 +13,7 @@ from rich.text import Text
 from .analytics import analytics_cache
 from .config import SYMBOL_CATEGORIES, SYMBOL_NAME, SYMBOLS_ORDERED
 from .radar import scan_opportunities
+from .whales import recent_whales, trade_notional, whale_pressure
 from .formatters import (
     fmt_large,
     fmt_price,
@@ -328,7 +329,7 @@ def panel_coinbase_top5(s: dict) -> Panel:
     )
 
 
-def panel_symbol_detail(s: dict, selected_symbol: str = "BTC") -> Panel:
+def panel_symbol_detail(s: dict, selected_symbol: str = "BTC", whale_usd: float = 100_000.0) -> Panel:
     sym = selected_symbol if s["prices"].get(selected_symbol, 0) else next(
         (item for item in SYMBOLS_ORDERED if s["prices"].get(item, 0)),
         selected_symbol,
@@ -432,9 +433,16 @@ def panel_symbol_detail(s: dict, selected_symbol: str = "BTC") -> Panel:
     depth = Table.grid(padding=(0, 3), expand=True)
     depth.add_column(ratio=3)
     depth.add_column(ratio=2)
+    pressure = whale_pressure(list(s.get("trades", {}).get(sym, [])), whale_usd)
+    if pressure["count"]:
+        bias = pressure["bias"]
+        pcol = "bright_green" if bias > 0.1 else "bright_red" if bias < -0.1 else "yellow"
+        tape_title = f"[bold bright_green]TRADE TAPE[/]  [dim]🐋 {pressure['count']} · sesgo [{pcol}]{bias:+.2f}[/][/]"
+    else:
+        tape_title = "[bold bright_green]TRADE TAPE[/]"
     depth.add_row(
         Panel(orderbook_table(s, sym), title="[bold bright_green]ORDER BOOK[/]", border_style="dark_green", padding=(0, 1)),
-        Panel(trade_tape_table(s, sym), title="[bold bright_green]TRADE TAPE[/]", border_style="dark_green", padding=(0, 1)),
+        Panel(trade_tape_table(s, sym, whale_usd), title=tape_title, border_style="dark_green", padding=(0, 1)),
     )
     return Panel(
         Group(grid, depth),
@@ -500,23 +508,28 @@ def orderbook_table(s: dict, sym: str) -> Table:
     return tbl
 
 
-def trade_tape_table(s: dict, sym: str) -> Table:
-    """Most recent executed trades (aggressor side coloured)."""
+def trade_tape_table(s: dict, sym: str, whale_usd: float = 100_000.0) -> Table:
+    """Most recent executed trades (aggressor side coloured, whales flagged)."""
     trades = list(s.get("trades", {}).get(sym, []))[-12:]
     tbl = Table.grid(padding=(0, 1), expand=True)
     tbl.add_column(style="dim green", min_width=8)     # time
     tbl.add_column(justify="right", min_width=12)      # price
     tbl.add_column(justify="right", min_width=10)      # qty
+    tbl.add_column(min_width=3)                         # whale flag
     if not trades:
-        tbl.add_row(Text("─", style="dim"), Text("esperando trades", style="dim"), Text("─", style="dim"))
+        tbl.add_row(Text("─", style="dim"), Text("esperando trades", style="dim"), Text("─", style="dim"), Text(""))
         return tbl
     for t in reversed(trades):
         col = "bright_green" if t["side"] == "buy" else "bright_red"
         arrow = "▲" if t["side"] == "buy" else "▼"
+        notional = trade_notional(t)
+        flag = "🐋" if notional >= whale_usd else ("★" if notional >= whale_usd * 0.25 else "")
+        row_style = f"bold {col}" if notional >= whale_usd else col
         tbl.add_row(
             Text(t["ts"][-8:], style="dim green"),
-            Text(f"{arrow}{fmt_price(t['price']).strip()}", style=col),
-            Text(_fmt_qty(t["qty"]), style=col),
+            Text(f"{arrow}{fmt_price(t['price']).strip()}", style=row_style),
+            Text(_fmt_qty(t["qty"]), style=row_style),
+            Text(flag, style="bright_yellow" if flag else "dim"),
         )
     return tbl
 
@@ -746,6 +759,94 @@ def panel_radar(s: dict) -> Panel:
     )
 
 
+def panel_derivs(s: dict) -> Panel:
+    """Perpetual futures: funding rates, open interest and live liquidations."""
+    funding = s.get("funding", {})
+    oi = s.get("open_interest", {})
+    liqs = s.get("liquidations", [])
+
+    fund_tbl = Table(box=box.SIMPLE_HEAVY, border_style="dark_green", header_style="bold bright_green", expand=True, padding=(0, 1))
+    fund_tbl.add_column("SYM", style="bold bright_green", min_width=6)
+    fund_tbl.add_column("FUNDING", justify="right", min_width=10)
+    fund_tbl.add_column("APR", justify="right", min_width=9)
+    fund_tbl.add_column("MARK", justify="right", min_width=12)
+    fund_tbl.add_column("OI", justify="right", min_width=12)
+    if funding:
+        # Show the most extreme funding (positive and negative) — the crowded trades.
+        ranked = sorted(funding.items(), key=lambda kv: kv[1].get("funding_rate", 0))
+        extremes = ranked[:6] + ranked[-6:]
+        seen = set()
+        for sym, data in reversed(extremes):
+            if sym in seen:
+                continue
+            seen.add(sym)
+            fr = data.get("funding_rate", 0.0)
+            fcol = "bright_green" if fr > 0.02 else "bright_red" if fr < -0.02 else "yellow"
+            apr = fr * 3 * 365  # funding is charged ~every 8h
+            fund_tbl.add_row(
+                sym,
+                Text(f"{fr:+.4f}%", style=fcol),
+                Text(f"{apr:+.1f}%", style=fcol),
+                Text(fmt_price(data.get("mark_price", 0)), style="bright_white"),
+                Text(fmt_large(oi.get(sym, 0) * data.get("mark_price", 0)) if oi.get(sym) else "─", style="dim white"),
+            )
+    else:
+        fund_tbl.add_row("─", Text("cargando funding...", style="dim"), "─", "─", "─")
+
+    liq_tbl = Table.grid(padding=(0, 1), expand=True)
+    liq_tbl.add_column(style="dim green", min_width=8)
+    liq_tbl.add_column(min_width=6)
+    liq_tbl.add_column(min_width=6)
+    liq_tbl.add_column(justify="right")
+    liq_tbl.add_row(
+        Text("HORA", style="bold dim green"), Text("SYM", style="bold dim green"),
+        Text("LADO", style="bold dim green"), Text("NOCIONAL", style="bold dim green"),
+    )
+    if liqs:
+        for liq in reversed(liqs[-14:]):
+            # A liquidated long is a forced sell (bearish); a liquidated short is bullish.
+            col = "bright_red" if liq["side"] == "long" else "bright_green"
+            liq_tbl.add_row(
+                Text(liq.get("ts", "")[-8:], style="dim green"),
+                Text(liq["symbol"], style="bold bright_green"),
+                Text("LONG 💥" if liq["side"] == "long" else "SHORT 💥", style=col),
+                Text(fmt_large(liq["notional"]), style=col),
+            )
+    else:
+        liq_tbl.add_row(Text("─", style="dim"), Text("esperando", style="dim"), Text("liquidaciones", style="dim"), Text("─", style="dim"))
+
+    body = Table.grid(padding=(0, 2), expand=True)
+    body.add_column(ratio=1)
+    body.add_column(ratio=1)
+    body.add_row(
+        Panel(fund_tbl, title="[bold bright_green]FUNDING · OPEN INTEREST[/]", border_style="dark_green", padding=(0, 1)),
+        Panel(liq_tbl, title="[bold bright_green]LIQUIDACIONES EN VIVO[/]", border_style="dark_green", padding=(0, 1)),
+    )
+    return Panel(
+        body,
+        title=(
+            "[bold bright_green]◆ DERIVADOS (Binance Perps)[/]  "
+            f"[dim]funding + / − = longs / shorts pagan · 💥 forzadas · upd {s.get('derivs_upd', '─')}[/]"
+        ),
+        border_style="green",
+    )
+
+
+def panel_derivs_legend() -> Panel:
+    tbl = Table.grid(padding=(0, 1), expand=True)
+    tbl.add_column(style="bold bright_green", min_width=9)
+    tbl.add_column(style="dim green")
+    tbl.add_row("FUNDING", "tasa por 8h; + longs pagan, − shorts pagan")
+    tbl.add_row("APR", "funding anualizado (×3×365)")
+    tbl.add_row("OI", "open interest nocional (contratos × mark)")
+    tbl.add_row("LIQ LONG", "long liquidado = venta forzada (bajista)")
+    tbl.add_row("LIQ SHORT", "short liquidado = compra forzada (alcista)")
+    tbl.add_row(Rule(style="dark_green"), "")
+    tbl.add_row("Uso", "funding extremo + OI alto = trade abarrotado")
+    tbl.add_row("", "cascada de liquidaciones = posible giro")
+    return Panel(tbl, title="[bold bright_green]DERIVADOS[/]", border_style="dark_green", padding=(0, 1))
+
+
 def panel_radar_legend() -> Panel:
     tbl = Table.grid(padding=(0, 1), expand=True)
     tbl.add_column(style="bold bright_green", min_width=9)
@@ -921,7 +1022,7 @@ def panel_footer(s: dict, view: str = "markets", flash: str | None = None) -> Pa
     ts = datetime.now(timezone.utc).strftime("%H:%M:%S.%f")[:-3] + " UTC"
     view_name = {
         "detail": "DETALLE", "top5": "TOP 5 GLOBAL", "portfolio": "PORTFOLIO",
-        "broker": "PAPER", "radar": "RADAR",
+        "broker": "PAPER", "radar": "RADAR", "derivs": "DERIVADOS",
     }.get(view, "MARKETS")
     if flash:
         txt = f"[bold bright_green]» {flash}[/]   [dim]{ts}[/]"
@@ -929,14 +1030,14 @@ def panel_footer(s: dict, view: str = "markets", flash: str | None = None) -> Pa
         txt = (
             f"[dim green]● WS LIVE — {s['ws_source']}[/]  "
             f"[dim]{s['ws_ticks']:,} ticks  │  vista: {view_name}  │  "
-            f"D detalle  R radar  W portfolio  T paper  N/P simbolo  │  "
+            f"D detalle  R radar  F derivados  W portfolio  T paper  N/P simbolo  │  "
             f"B compra  S vende  C cierra  │  Ctrl+C salir[/]  [dim green]{ts}[/]"
         )
     return Panel(Text.from_markup(txt), border_style="dark_green", padding=(0, 1))
 
 
 def build_dashboard(s: dict, view: str = "markets", selected_symbol: str = "BTC", portfolio_eval: dict | None = None,
-                    broker_eval: dict | None = None, flash: str | None = None) -> Layout:
+                    broker_eval: dict | None = None, flash: str | None = None, whale_usd: float = 100_000.0) -> Layout:
     layout = Layout()
     layout.split_column(
         Layout(name="header", size=3),
@@ -957,8 +1058,11 @@ def build_dashboard(s: dict, view: str = "markets", selected_symbol: str = "BTC"
     layout["ticker"].update(panel_ticker(s))
     layout["alerts"].update(panel_alerts(s))
     if view == "detail":
-        layout["prices"].update(panel_symbol_detail(s, selected_symbol))
+        layout["prices"].update(panel_symbol_detail(s, selected_symbol, whale_usd))
         layout["legend"].update(panel_indicators_legend())
+    elif view == "derivs":
+        layout["prices"].update(panel_derivs(s))
+        layout["legend"].update(panel_derivs_legend())
     elif view == "portfolio":
         layout["prices"].update(panel_portfolio(portfolio_eval))
         layout["legend"].update(panel_indicators_legend())

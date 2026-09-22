@@ -1,5 +1,9 @@
 # TerminalCrypt
 
+![CI](https://github.com/mangoostaa/TerminalCrypt/actions/workflows/ci.yml/badge.svg)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 Real-time cryptocurrency terminal dashboard with WebSocket market feeds, live technical indicators, exchange failover, and a Rich-based TUI.
 
 ![TerminalCrypt dashboard](assets/ss1.png)
@@ -14,6 +18,8 @@ Real-time cryptocurrency terminal dashboard with WebSocket market feeds, live te
 - Optional Telegram surge alerts.
 - Optional SQLite tick persistence for local analysis and replay workflows.
 - Opportunity Radar: multi-factor setup scanner with conviction scores, reasons, and ATR-based levels.
+- Derivatives view: perpetual funding rates, open interest, and a live forced-liquidation feed.
+- Whale detection: large prints flagged on the trade tape with aggregate buy/sell pressure.
 - Live order book depth ladder and trade tape for the focused symbol.
 - Portfolio tracking with live unrealized P&L, and strategy backtesting over historical candles.
 - Paper trading with simulated execution: market and limit orders, longs and shorts, fees, slippage, and P&L.
@@ -49,6 +55,18 @@ python -m pip install target/wheels/terminalcrypt-*.whl
 ```
 
 If the Rust extension is unavailable, TerminalCrypt falls back to the older Cython backend and then to pure Python.
+
+### Docker
+
+Build and run in a container (a TUI needs an interactive terminal, so pass `-it`):
+
+```bash
+docker build -t terminalcrypt .
+docker run -it --rm terminalcrypt            # live dashboard
+docker run -it --rm terminalcrypt --demo     # synthetic demo, no network
+```
+
+Pass any flag after the image name, e.g. `docker run -it --rm terminalcrypt --source kraken`.
 
 ## Usage
 
@@ -103,6 +121,20 @@ Open the Opportunity Radar (multi-factor setup scanner):
 terminalcrypt --radar
 ```
 
+Try the whole UI on synthetic data — no network, ideal for a demo or a README GIF:
+
+```bash
+terminalcrypt --demo
+```
+
+To record the GIF for the README (using [asciinema](https://asciinema.org) and
+[agg](https://github.com/asciinema/agg)):
+
+```bash
+asciinema rec demo.cast -c "terminalcrypt --demo"
+agg demo.cast assets/demo.gif
+```
+
 Paper trade with simulated execution against the live feed:
 
 ```bash
@@ -118,6 +150,7 @@ Keyboard controls in the live dashboard:
 - `M`: return to Markets.
 - `D`: open Detail view (live order book depth + trade tape for the selected symbol).
 - `R`: open the Opportunity Radar.
+- `F`: open the Derivatives view (funding, open interest, liquidations).
 - `W`: open the Portfolio view.
 - `T`: open the Paper Trading view.
 - `N` / `P`: move the selected symbol.
@@ -201,6 +234,23 @@ the reasons alongside the score. Each setup comes with concrete, ATR-based trade
 levels: entry, a `1.5·ATR` stop, and targets at 1R / 2R / 3R with the risk/reward.
 It reads the same live indicator engine as the dashboard, so it updates tick by
 tick. It is a research and idea-generation tool, not financial advice.
+
+### Derivatives (funding, open interest, liquidations)
+
+Press `F` for the derivatives view, powered by Binance USD-M Futures. It shows
+the most extreme **funding rates** (positive = longs pay shorts, a crowded long;
+negative = the opposite) with their annualized equivalent, **open interest**
+notional, and a **live forced-liquidation feed** — a liquidated long is a forced
+sell (bearish), a liquidated short a forced buy (bullish). Funding extremes plus
+a liquidation cascade often mark exhaustion or a turn. Toggle with
+`derivs_enabled`.
+
+### Whale detection
+
+On the trade tape (Detail view, `D`), prints at or above `whale_usd` (default
+$100k) are flagged with 🐋, and quarter-size prints with ★. The tape header shows
+the whales' aggregate **buy/sell bias** for the focused symbol, so you can see
+when big players are leaning into a move. Tune the threshold with `whale_usd`.
 
 ### Order book and trade tape
 
@@ -303,6 +353,36 @@ python -m pip install build
 python -m build
 ```
 
+## Performance
+
+The full indicator *bundle* — RSI, EMA cross, MACD, Bollinger, ATR, relative
+volume, momentum/squeeze/divergence and the combined signal — runs for every
+symbol on every tick. It has three interchangeable backends, selected
+automatically at import (Rust → Cython → pure Python).
+
+Measured with `benchmarks/bench_indicators.py` (120-candle window, 20,000
+iterations, best of 5) on an AMD Ryzen (Zen 3, 16 threads), Python 3.12,
+Windows:
+
+| Backend | Per bundle call | Bundles / sec | Full 80-symbol scan | Speedup |
+|---|--:|--:|--:|--:|
+| Pure Python | ~626 µs | ~1,600 | ~50 ms | 1.0× |
+| **Rust (AVX2 + rayon)** | **~46 µs** | **~21,700** | **~3.7 ms** | **≈13.6×** |
+
+The Rust backend wins for three reasons: it skips the Python interpreter
+overhead per call, it computes the eight sub-indicators in parallel with
+[rayon](https://github.com/rayon-rs/rayon), and its `sum` / sum-of-squared-
+deviation kernels use hand-written **AVX2** SIMD with a runtime feature check
+(`is_x86_feature_detected!("avx2")`) that falls back to a scalar loop on older
+CPUs. If the compiled extension is unavailable, the app transparently drops to
+the Cython backend and then to pure Python — identical results, lower speed.
+
+Numbers are hardware-dependent; reproduce them on your own machine with:
+
+```bash
+python benchmarks/bench_indicators.py
+```
+
 ## Architecture
 
 ```text
@@ -331,9 +411,11 @@ WebSocket streams
 - [x] Strategy backtesting
 - [x] Paper trading with simulated execution
 - [x] Opportunity radar (multi-factor scanner)
+- [x] Derivatives data (funding, open interest, liquidations)
+- [x] Whale / large-trade detection
+- [x] Docker image
 - [ ] Configurable layouts
 - [ ] Plugin system
-- [ ] Docker image
 - [ ] Asyncio migration
 
 ## Disclaimer

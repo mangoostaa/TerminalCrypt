@@ -41,6 +41,17 @@ class StateTradingTests(unittest.TestCase):
         self.assertEqual(book["bids"], [(99.0, 2.0)])
         self.assertEqual(book["asks"], [(102.0, 3.0)])
 
+    def test_derivs_and_liquidations_in_snapshot(self):
+        state = MarketState()
+        state.update_funding({"BTC": {"funding_rate": 0.01, "mark_price": 60000, "next_funding": 0}})
+        state.update_open_interest({"BTC": 12345.0})
+        state.add_liquidation({"symbol": "BTC", "side": "long", "price": 60000, "qty": 1, "notional": 60000})
+        snap = state.snapshot()
+        self.assertAlmostEqual(snap["funding"]["BTC"]["funding_rate"], 0.01)
+        self.assertAlmostEqual(snap["open_interest"]["BTC"], 12345.0)
+        self.assertEqual(snap["liquidations"][-1]["side"], "long")
+        self.assertIn("ts", snap["liquidations"][-1])
+
     def test_seed_candles_warms_history(self):
         state = MarketState()
         candles = [

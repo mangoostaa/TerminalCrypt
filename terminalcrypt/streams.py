@@ -275,6 +275,52 @@ class BinanceFocusStream:
             self._ws.close()
 
 
+class BinanceLiquidationStream:
+    """All-market forced-liquidation feed from Binance USD-M Futures."""
+
+    URL = "wss://fstream.binance.com/ws/!forceOrder@arr"
+
+    def __init__(self, state: MarketState):
+        self.state = state
+        self._ws = None
+        self._stop = threading.Event()
+        self._delay = 2
+
+    def _on_message(self, ws, raw: str):
+        from .derivs import parse_liquidation
+        try:
+            liq = parse_liquidation(json.loads(raw))
+            if liq:
+                self.state.add_liquidation(liq)
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as e:
+            self.state.set_error("binance_liq", e)
+
+    def _on_error(self, ws, err):
+        log.warning("binance liquidation websocket error: %s", err)
+
+    def start(self):
+        self._stop.clear()
+
+        def _run():
+            while not self._stop.is_set():
+                self._ws = websocket.WebSocketApp(
+                    self.URL,
+                    on_message=self._on_message,
+                    on_error=self._on_error,
+                )
+                self._ws.run_forever(ping_interval=20, ping_timeout=10)
+                if self._stop.is_set():
+                    break
+                self._stop.wait(min(self._delay, 5))
+
+        threading.Thread(target=_run, name="binance-liq-ws", daemon=True).start()
+
+    def stop(self):
+        self._stop.set()
+        if self._ws:
+            self._ws.close()
+
+
 class KrakenStream:
     def __init__(self, state: MarketState):
         self.state = state

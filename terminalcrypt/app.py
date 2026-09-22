@@ -17,12 +17,18 @@ from .history import fetch_candles
 from .notifications import start_surge_notifications
 from .portfolio import Portfolio
 from .broker import OrderError, PaperBroker
-from .rest import start_rest
+from .rest import start_derivs, start_rest
 from .scanner import render_scan_table, scan_snapshot
 from .settings import AppSettings
 from .state import MarketState
 from .storage import SQLiteTickStore
-from .streams import BinanceFocusStream, BinanceStream, CoinbaseStream, KrakenStream
+from .streams import (
+    BinanceFocusStream,
+    BinanceLiquidationStream,
+    BinanceStream,
+    CoinbaseStream,
+    KrakenStream,
+)
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +65,7 @@ class CryptexApp:
         self.state = MarketState(tick_recorder=self._tick_store)
         self._stream = None
         self._focus = None
+        self._liquidations = None
         self._notifier = None
         self.console = Console()
         self.view = self.settings.initial_view
@@ -131,6 +138,8 @@ class CryptexApp:
             self.view = "broker"
         elif key in ("r", "R"):
             self.view = "radar"
+        elif key in ("f", "F"):
+            self.view = "derivs"
         elif key in ("n", "N"):
             self._move_selected(1)
         elif key in ("p", "P"):
@@ -228,6 +237,9 @@ class CryptexApp:
         if self.settings.depth_enabled:
             self._focus = BinanceFocusStream(self.state, self.selected_symbol)
             self._focus.start()
+        if self.settings.derivs_enabled:
+            self._liquidations = BinanceLiquidationStream(self.state)
+            self._liquidations.start()
 
     def _warmup(self, source: str) -> None:
         """Seed indicator history with recent candles so signals aren't cold."""
@@ -260,6 +272,8 @@ class CryptexApp:
                 global_interval=self.settings.global_interval,
                 news_interval=self.settings.news_interval,
             )
+            if self.settings.derivs_enabled:
+                start_derivs(self.state, self.settings.derivs_interval)
         if self.settings.telegram_enabled:
             self._notifier = start_surge_notifications(self.state)
             if self._notifier.enabled:
@@ -283,6 +297,8 @@ class CryptexApp:
                 self._stream.stop()
             if self._focus:
                 self._focus.stop()
+            if self._liquidations:
+                self._liquidations.stop()
             if self._notifier:
                 self._notifier.stop()
             if self._tick_store:
@@ -297,7 +313,8 @@ class CryptexApp:
         last_mark = 0.0
         try:
             with Live(
-                build_dashboard(self.state.snapshot(), self.view, self.selected_symbol, self.portfolio_eval()),
+                build_dashboard(self.state.snapshot(), self.view, self.selected_symbol,
+                                self.portfolio_eval(), whale_usd=self.settings.whale_usd),
                 refresh_per_second=self.settings.refresh_per_second,
                 screen=True,
             ) as live:
@@ -315,6 +332,7 @@ class CryptexApp:
                     live.update(build_dashboard(
                         self.state.snapshot(), self.view, self.selected_symbol,
                         self.portfolio_eval(), broker_eval, self._flash_msg(),
+                        self.settings.whale_usd,
                     ))
         except Exception as e:
             log.exception("live dashboard crashed")
@@ -323,6 +341,86 @@ class CryptexApp:
             if self._tick_store:
                 self._tick_store.stop()
             self._save_broker()
+
+    def _demo_feed(self) -> None:
+        """Generate realistic synthetic market data (no network) for demos/GIFs."""
+        import math
+        import random
+
+        bases = {
+            "BTC": 65000, "ETH": 3200, "SOL": 150, "BNB": 580, "XRP": 0.62, "ADA": 0.45,
+            "DOGE": 0.12, "AVAX": 35, "LINK": 15, "DOT": 7, "MATIC": 0.9, "LTC": 80,
+            "ATOM": 9, "INJ": 28, "NEAR": 6, "SUI": 1.4,
+        }
+        with self.state._lock:
+            self.state.ws_source = "DEMO"
+            self.state.ws_status = "synthetic ✓"
+            self.state.fg_data = [{"value": str(55 + int(10 * math.sin(i / 3)))} for i in range(30)]
+            self.state.global_data = {
+                "total_market_cap": {"usd": 2.4e12}, "total_volume": {"usd": 9.8e10},
+                "market_cap_change_percentage_24h_usd": 1.8,
+                "market_cap_percentage": {"btc": 52.1, "eth": 17.3, "usdt": 4.2, "bnb": 3.1, "sol": 2.8},
+                "active_cryptocurrencies": 13567,
+            }
+            self.state.news = [{"title": "DEMO: datos sintéticos — sin conexión de red", "source": "TerminalCrypt", "time": ""}]
+        t = 0
+        while not self._demo_stop.is_set():
+            t += 1
+            for sym, base in bases.items():
+                drift = math.sin(t / 20 + (hash(sym) % 7)) * 0.02
+                price = base * (1 + drift) * (1 + random.uniform(-0.004, 0.004))
+                chg = drift * 100 + random.uniform(-1.5, 1.5)
+                self.state.update_tick(sym, price, chg, price * 1.03, price * 0.97,
+                                       base * random.uniform(1e4, 1e5),
+                                       bid=price * 0.9995, ask=price * 1.0005)
+            sel = self.selected_symbol if self.selected_symbol in bases else "BTC"
+            p = self.state.prices.get(sel, bases.get(sel, 100))
+            for _ in range(random.randint(1, 4)):
+                qty = random.uniform(0.01, 3)
+                if random.random() < 0.12:      # occasional whale print
+                    qty *= random.uniform(60, 400)
+                self.state.update_trade(sel, p * (1 + random.uniform(-0.001, 0.001)), qty,
+                                        random.choice(["buy", "sell"]))
+            bids = [(p * (1 - 0.0005 * i), random.uniform(0.5, 20)) for i in range(1, 13)]
+            asks = [(p * (1 + 0.0005 * i), random.uniform(0.5, 20)) for i in range(1, 13)]
+            self.state.update_orderbook(sel, bids, asks)
+            if t % 6 == 0:
+                self.state.update_funding({s: {"funding_rate": random.uniform(-0.05, 0.05),
+                                               "mark_price": self.state.prices.get(s, b), "next_funding": 0}
+                                           for s, b in bases.items()})
+                self.state.update_open_interest({s: random.uniform(1e3, 1e5) for s in bases})
+            if random.random() < 0.3:
+                s = random.choice(list(bases))
+                pr = self.state.prices.get(s, bases[s])
+                self.state.add_liquidation({"symbol": s, "side": random.choice(["long", "short"]),
+                                            "price": pr, "qty": random.uniform(0.1, 5),
+                                            "notional": pr * random.uniform(1e4, 5e5)})
+            self._demo_stop.wait(0.4)
+
+    def run_demo(self) -> None:
+        """Run the full dashboard on synthetic data — no network, for demos/GIFs."""
+        self._print_startup_banner("demo", "DEMO")
+        self.console.print("[bold yellow]MODO DEMO[/] — datos sintéticos, sin conexión. Ctrl+C para salir.", highlight=False)
+        self._demo_stop = threading.Event()
+        threading.Thread(target=self._demo_feed, name="demo-feed", daemon=True).start()
+        time.sleep(1.0)
+        try:
+            with Live(
+                build_dashboard(self.state.snapshot(), self.view, self.selected_symbol, whale_usd=self.settings.whale_usd),
+                refresh_per_second=self.settings.refresh_per_second,
+                screen=True,
+            ) as live:
+                while True:
+                    time.sleep(0.4)
+                    self._handle_key(self._read_key())
+                    live.update(build_dashboard(
+                        self.state.snapshot(), self.view, self.selected_symbol,
+                        None, self.broker_eval(), self._flash_msg(), self.settings.whale_usd,
+                    ))
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self._demo_stop.set()
 
     def run_backtest(self, symbol: str, source: str = "binance", interval: int = 60, limit: int = 500, allow_short: bool = True) -> int:
         """Fetch history for ``symbol`` and print a backtest report. Returns exit code."""
@@ -405,7 +503,8 @@ class CryptexApp:
             if scan:
                 self.console.print(render_scan_table(scan_snapshot(snapshot, scan, limit, symbols), scan))
             else:
-                self.console.print(build_dashboard(snapshot, self.view, self.selected_symbol, self.portfolio_eval()))
+                self.console.print(build_dashboard(snapshot, self.view, self.selected_symbol,
+                                                    self.portfolio_eval(), whale_usd=self.settings.whale_usd))
         else:
             content = (
                 render_scan(snapshot, output_format, scan, limit, symbols)

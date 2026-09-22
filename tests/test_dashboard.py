@@ -49,6 +49,14 @@ class DashboardTests(unittest.TestCase):
         build_dashboard(snap, "broker", "BTC", None, broker.evaluate({"BTC": 139.0}), "COMPRA BTC 0.1 @ 139")
         # Opportunity Radar view renders over the synthetic feed.
         build_dashboard(snap, "radar", "BTC")
+        # Derivatives view (funding + liquidations) and whale-flagged detail.
+        state.update_funding({"BTC": {"funding_rate": 0.03, "mark_price": 139.0, "next_funding": 0}})
+        state.update_open_interest({"BTC": 5000.0})
+        state.add_liquidation({"symbol": "BTC", "side": "long", "price": 139.0, "qty": 2, "notional": 278.0})
+        state.update_trade("BTC", 139.0, 5000.0, "buy")   # whale-sized print
+        snap = state.snapshot()
+        build_dashboard(snap, "derivs", "BTC")
+        build_dashboard(snap, "detail", "BTC", whale_usd=100.0)
         self.assertEqual(analytics_cache.intraday_rankings(snap, 1)[0]["sym"], "BTC")
         self.assertEqual(analytics_cache.volume_rankings(snap, 1)[0]["sym"], "BTC")
 

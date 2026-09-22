@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import os
+
+# Set TERMINALCRYPT_NO_NATIVE=1 to force the pure-Python backend (used by the
+# benchmark harness to compare backends, and handy for debugging).
+_ALLOW_NATIVE = os.getenv("TERMINALCRYPT_NO_NATIVE", "").strip().lower() not in {"1", "true", "yes", "on"}
+
 _BACKEND = "python"
 
 
@@ -346,41 +352,42 @@ def _calculate_indicator_bundle_python(
 _calculate_indicator_bundle_native = None
 
 
-try:
-    from ._cython.indicators_cy import (
-        calculate_rsi,
-        calculate_ema,
-        calculate_ema_cross,
-        calculate_macd,
-        calculate_bollinger,
-        calculate_atr,
-        calculate_signal,
-        relative_volume,
-    )
-
-    _BACKEND = "cython"
-except Exception:
-    pass
-
-try:
-    from ._rust import (
-        calculate_rsi,
-        calculate_ema,
-        calculate_ema_cross,
-        calculate_macd,
-        calculate_bollinger,
-        calculate_atr,
-        calculate_signal,
-        relative_volume,
-    )
+if _ALLOW_NATIVE:
     try:
-        from ._rust import calculate_indicator_bundle as _calculate_indicator_bundle_native
+        from ._cython.indicators_cy import (
+            calculate_rsi,
+            calculate_ema,
+            calculate_ema_cross,
+            calculate_macd,
+            calculate_bollinger,
+            calculate_atr,
+            calculate_signal,
+            relative_volume,
+        )
+
+        _BACKEND = "cython"
     except Exception:
         pass
 
-    _BACKEND = "rust"
-except Exception:
-    pass
+    try:
+        from ._rust import (
+            calculate_rsi,
+            calculate_ema,
+            calculate_ema_cross,
+            calculate_macd,
+            calculate_bollinger,
+            calculate_atr,
+            calculate_signal,
+            relative_volume,
+        )
+        try:
+            from ._rust import calculate_indicator_bundle as _calculate_indicator_bundle_native
+        except Exception:
+            pass
+
+        _BACKEND = "rust"
+    except Exception:
+        pass
 
 calculate_signal = _calculate_signal_extended
 

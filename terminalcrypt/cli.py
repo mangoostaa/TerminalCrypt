@@ -38,6 +38,7 @@ def main() -> None:
     parser.add_argument("--long-only", action="store_true", help="Backtest sólo en largo (sin cortos)")
     parser.add_argument("--portfolio", metavar="PATH", help="Carga un portfolio (JSON/TOML) y muestra P&L en vivo")
     parser.add_argument("--radar", action="store_true", help="Abre el Opportunity Radar (scanner multi-factor) en vivo")
+    parser.add_argument("--demo", action="store_true", help="Dashboard con datos sintéticos (sin red) para demos/GIFs")
     parser.add_argument("--paper", action="store_true", help="Activa paper trading (ejecución simulada)")
     parser.add_argument("--paper-cash", type=float, metavar="USD", help="Efectivo inicial de la cuenta paper")
     parser.add_argument("--paper-reset", action="store_true", help="Reinicia la cuenta paper antes de arrancar")
@@ -73,6 +74,8 @@ def main() -> None:
 
     if args.help:
         app.console.print(HELP_TEXT)
+    elif args.demo:
+        app.run_demo()
     elif args.backtest:
         code = app.run_backtest(
             args.backtest,

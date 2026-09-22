@@ -159,8 +159,26 @@ def _fetch_news(state: MarketState):
         state.news_upd = now_utc()
 
 
+def _fetch_derivs(state: MarketState):
+    from .derivs import fetch_funding, fetch_open_interest
+    funding = fetch_funding()
+    if funding:
+        state.update_funding(funding)
+        state.clear_error("derivs")
+    oi = fetch_open_interest()
+    if oi:
+        state.update_open_interest(oi)
+    if not funding and not oi:
+        state.set_error("derivs", "sin datos de derivados", limit=40)
+
+
 def start_rest(state: MarketState, fg_interval: int = 300, global_interval: int = 120, news_interval: int = 180):
     log.info("starting rest loops fg=%ss global=%ss news=%ss", fg_interval, global_interval, news_interval)
     _rest_loop(lambda: _fetch_fg(state), fg_interval)
     _rest_loop(lambda: _fetch_global(state), global_interval)
     _rest_loop(lambda: _fetch_news(state), news_interval)
+
+
+def start_derivs(state: MarketState, interval: int = 60):
+    log.info("starting derivatives loop interval=%ss", interval)
+    _rest_loop(lambda: _fetch_derivs(state), interval)

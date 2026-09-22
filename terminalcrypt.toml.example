@@ -17,6 +17,9 @@ news_interval = 180
 warmup_enabled = true          # sembrar indicadores con velas históricas al arrancar
 depth_enabled = true           # order book + trade tape del símbolo seleccionado (Binance)
 portfolio_file = ""            # ruta a portfolio.json / .toml para seguimiento de P&L
+derivs_enabled = true          # funding, open interest y liquidaciones (Binance Perps)
+derivs_interval = 60           # frecuencia de refresco de funding/OI (segundos)
+whale_usd = 100000.0           # umbral (USD) para marcar trades como ballena
 # Paper trading (ejecución simulada)
 paper_enabled = false          # activa la cuenta de paper trading
 paper_cash = 10000.0           # efectivo inicial (USD)
