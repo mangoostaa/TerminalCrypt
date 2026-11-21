@@ -122,27 +122,8 @@ fn rsi_value(prices: &[f64], period: usize) -> f64 {
         return 50.0;
     }
 
-    let start = prices.len() - period;
-    let mut gains = 0.0;
-    let mut losses = 0.0;
-
-    for i in start..prices.len() {
-        let diff = prices[i] - prices[i - 1];
-        if diff > 0.0 {
-            gains += diff;
-        } else {
-            losses += -diff;
-        }
-    }
-
-    let avg_gain = gains / period as f64;
-    let avg_loss = if losses > 0.0 {
-        losses / period as f64
-    } else {
-        0.0001
-    };
-    let rs = avg_gain / avg_loss;
-    round_to(100.0 - (100.0 / (1.0 + rs)), 1)
+    let rsi = fin_primitives::signals::batch_f64::rsi(prices, period);
+    round_to(rsi[prices.len() - 1], 1)
 }
 
 struct EmaCrossRaw {
@@ -1016,6 +997,18 @@ mod tests {
         let prices = sequence(30);
 
         assert_eq!(rsi_value(&prices, 14), 100.0);
+    }
+
+    #[test]
+    fn rsi_uses_wilder_smoothing_over_full_history() {
+        // Wilder's 14-day RSI worked example (New Concepts in Technical Trading Systems):
+        // smoothing carries the whole history, so it is not the 14-change window mean.
+        let prices = [
+            44.34, 44.09, 44.15, 43.61, 44.33, 44.83, 45.10, 45.42, 45.84, 46.08, 45.89, 46.03,
+            45.61, 46.28, 46.28, 46.00, 46.03, 46.41, 46.22, 45.64,
+        ];
+
+        assert_eq!(rsi_value(&prices, 14), 57.9);
     }
 
     #[test]

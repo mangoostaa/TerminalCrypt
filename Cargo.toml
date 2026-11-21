@@ -10,3 +10,4 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.27.1", features = ["extension-module"] }
 rayon = "1.10"
+fin-primitives = { version = "4.0.1", default-features = false, features = ["indicators"] }
