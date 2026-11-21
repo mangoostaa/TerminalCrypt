@@ -12,12 +12,7 @@ _BACKEND = "python"
 def calculate_rsi(prices: list, period: int = 14) -> float:
     if len(prices) < period + 1:
         return 50.0
-    gains = [max(prices[i] - prices[i - 1], 0) for i in range(1, len(prices))]
-    losses = [abs(min(prices[i] - prices[i - 1], 0)) for i in range(1, len(prices))]
-    avg_gain = sum(gains[-period:]) / period
-    avg_loss = sum(losses[-period:]) / period if sum(losses[-period:]) > 0 else 0.0001
-    rs = avg_gain / avg_loss
-    return round(100 - (100 / (1 + rs)), 1)
+    return calculate_rsi_series(prices, period)[-1]
 
 
 def calculate_ema(prices: list, period: int) -> list:
@@ -293,26 +288,24 @@ def calculate_rsi_series(prices: list, period: int = 14) -> list:
     if period <= 0:
         return [50.0] * len(prices)
     values = [50.0] * min(len(prices), period)
-    gains: list[float] = []
-    losses: list[float] = []
-    gain_sum = 0.0
-    loss_sum = 0.0
+    avg_gain = 0.0
+    avg_loss = 0.0
     for i in range(1, len(prices)):
         diff = prices[i] - prices[i - 1]
         gain = max(diff, 0)
         loss = abs(min(diff, 0))
-        gains.append(gain)
-        losses.append(loss)
-        gain_sum += gain
-        loss_sum += loss
-        if len(gains) > period:
-            gain_sum -= gains[-period - 1]
-            loss_sum -= losses[-period - 1]
-        if len(gains) >= period:
-            avg_gain = gain_sum / period
-            avg_loss = loss_sum / period if loss_sum > 0 else 0.0001
-            rs = avg_gain / avg_loss
-            values.append(round(100 - (100 / (1 + rs)), 1))
+        if i <= period:
+            avg_gain += gain
+            avg_loss += loss
+            if i < period:
+                continue
+            avg_gain /= period
+            avg_loss /= period
+        else:
+            avg_gain = (avg_gain * (period - 1) + gain) / period
+            avg_loss = (avg_loss * (period - 1) + loss) / period
+        total = avg_gain + avg_loss
+        values.append(round(100 * avg_gain / total, 1) if total > 0 else 0.0)
     return values
 
 
